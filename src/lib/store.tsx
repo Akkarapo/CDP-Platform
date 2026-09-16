@@ -162,10 +162,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const isTransactions = TRANSACTION_HEADERS.every((h) => headers.includes(h));
 
     const importId = `imp_${Date.now()}`;
+    const existingTransactionIds = new Set(allTransactionsRaw.map((t) => t.transaction_id));
     let entry: ImportLogEntry;
     if (isEventLog) {
       const existingCustomerIds = new Set(allCustomersRaw.map((c) => c.customer_id));
-      const { customers: newCustomers, transactions: newTransactions } = splitEventLog(rows, existingCustomerIds);
+      const { customers: newCustomers, transactions: allNewTransactions } = splitEventLog(rows, existingCustomerIds);
+      // Re-uploading a file (e.g. after retrying a failed import) must not
+      // double-count transactions already in the system.
+      const newTransactions = allNewTransactions.filter((t) => !existingTransactionIds.has(t.transaction_id));
       setExtraCustomers((prev) => {
         const next = [...prev, ...newCustomers];
         saveLS(LS_KEYS.extraCustomers, next);
@@ -197,7 +201,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         preview: rows.slice(0, 5),
       };
     } else if (isTransactions) {
-      const newTransactions = rows as unknown as RawTransaction[];
+      const newTransactions = (rows as unknown as RawTransaction[]).filter(
+        (t) => !existingTransactionIds.has(t.transaction_id)
+      );
       setExtraTransactions((prev) => {
         const next = [...prev, ...newTransactions];
         saveLS(LS_KEYS.extraTransactions, next);
@@ -211,6 +217,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
         status: "success",
         fileName,
         transactionIds: newTransactions.map((t) => t.transaction_id),
+      };
+      setImportLog((prev) => {
+        const next = [entry, ...prev];
+        saveLS(LS_KEYS.importLog, next);
+        return next;
+      });
+      const skipped = rows.length - newTransactions.length;
+      return {
+        ok: true,
+        message: skipped > 0
+          ? `นำเข้าแล้ว ${newTransactions.length} ธุรกรรม (ข้าม ${skipped} รายการที่มีอยู่แล้ว) จากไฟล์ "${fileName}"`
+          : `นำเข้าแล้ว ${newTransactions.length} ธุรกรรมจากไฟล์ "${fileName}"`,
+        preview: rows.slice(0, 5),
       };
     } else if (isCustomers) {
       const newCustomers = rows as unknown as RawCustomer[];
