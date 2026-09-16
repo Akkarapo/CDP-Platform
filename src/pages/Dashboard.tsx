@@ -90,18 +90,16 @@ export default function Dashboard() {
 
   const rfmMatrix = useMemo(() => buildRfmMatrixStats(customers), [customers]);
 
-  // Track sizes follow real customer counts (treemap-style) instead of an
-  // even 3x3 split, so a segment's box visibly reflects how many people are
-  // actually in it. A floor keeps near-empty segments legible.
-  const rfmTracks = useMemo(() => {
-    const colTotal = (band: 0 | 1 | 2) => rfmMatrix.filter((c) => c.rBand === band).reduce((s, c) => s + c.count, 0);
-    const rowTotal = (band: 0 | 1 | 2) => rfmMatrix.filter((c) => c.fmBand === band).reduce((s, c) => s + c.count, 0);
-    const cols = ([0, 1, 2] as const).map((b) => Math.max(colTotal(b), 1));
-    const rows = ([2, 1, 0] as const).map((b) => Math.max(rowTotal(b), 1));
-    return {
-      gridTemplateColumns: cols.map((v) => `minmax(120px, ${v}fr)`).join(" "),
-      gridTemplateRows: rows.map((v) => `minmax(92px, ${v}fr)`).join(" "),
-    };
+  // Mosaic-plot layout: each row's height follows that row's share of all
+  // customers, and — independently, within each row — each cell's width
+  // follows its own share of that row. Area then equals each cell's true
+  // share of the total, not just a same-width-per-column grid.
+  const rfmRows = useMemo(() => {
+    return ([2, 1, 0] as const).map((fmBand) => {
+      const cells = rfmMatrix.filter((c) => c.fmBand === fmBand);
+      const total = cells.reduce((s, c) => s + c.count, 0);
+      return { total: Math.max(total, 1), cells };
+    });
   }, [rfmMatrix]);
 
   const recentCampaigns = campaigns.slice(0, 5);
@@ -164,22 +162,30 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex-1">
-            <div className="grid gap-3" style={rfmTracks}>
-              {rfmMatrix.map((cell) => {
-                const c = TIER_COLOR[cell.tier];
-                return (
-                  <div key={cell.key} className="rounded-xl p-3.5 flex flex-col justify-between overflow-hidden" style={{ backgroundColor: c.bg }}>
-                    <div>
-                      <p className="text-sm font-semibold" style={{ color: c.color }}>{cell.label}</p>
-                      <p className="text-xs mt-1 leading-snug" style={{ color: c.color, opacity: 0.85 }}>{cell.description}</p>
-                    </div>
-                    <div className="flex items-end justify-between mt-2">
-                      <span className="text-xl font-semibold tabular-nums" style={{ color: c.color }}>{cell.count.toLocaleString("th-TH")}</span>
-                      <span className="text-xs font-medium tabular-nums" style={{ color: c.color, opacity: 0.85 }}>{cell.pct}%</span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex flex-col gap-3" style={{ height: 420 }}>
+              {rfmRows.map((row, ri) => (
+                <div key={ri} className="flex gap-3" style={{ flexGrow: row.total, flexBasis: 0, minHeight: 72 }}>
+                  {row.cells.map((cell) => {
+                    const c = TIER_COLOR[cell.tier];
+                    return (
+                      <div
+                        key={cell.key}
+                        className="rounded-xl p-3.5 flex flex-col justify-between overflow-hidden"
+                        style={{ backgroundColor: c.bg, flexGrow: Math.max(cell.count, 1), flexBasis: 0, minWidth: 96 }}
+                      >
+                        <div>
+                          <p className="text-sm font-semibold" style={{ color: c.color }}>{cell.label}</p>
+                          <p className="text-xs mt-1 leading-snug" style={{ color: c.color, opacity: 0.85 }}>{cell.description}</p>
+                        </div>
+                        <div className="flex items-end justify-between mt-2">
+                          <span className="text-xl font-semibold tabular-nums" style={{ color: c.color }}>{cell.count.toLocaleString("th-TH")}</span>
+                          <span className="text-xs font-medium tabular-nums" style={{ color: c.color, opacity: 0.85 }}>{cell.pct}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
             <p className="text-xs text-center mt-2" style={{ color: "var(--color-ink-3)" }}>Recency →</p>
           </div>
