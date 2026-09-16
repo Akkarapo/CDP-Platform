@@ -92,6 +92,8 @@ interface DataContextValue {
   updateCampaignStatus: (id: string, status: CampaignRecord["status"]) => void;
   importLog: ImportLogEntry[];
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
+  removeImport: (id: string) => void;
+  clearAllImports: () => void;
   segmentCounts: Record<Segment, number>;
 }
 
@@ -157,6 +159,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const isCustomers = CUSTOMER_HEADERS.every((h) => headers.includes(h));
     const isTransactions = TRANSACTION_HEADERS.every((h) => headers.includes(h));
 
+    const importId = `imp_${Date.now()}`;
     let entry: ImportLogEntry;
     if (isEventLog) {
       const existingCustomerIds = new Set(allCustomersRaw.map((c) => c.customer_id));
@@ -171,7 +174,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         saveLS(LS_KEYS.extraTransactions, next);
         return next;
       });
-      entry = { id: `imp_${Date.now()}`, date: new Date().toLocaleString("th-TH"), channel: "CSV/Excel", rows: rows.length, status: "success" };
+      entry = {
+        id: importId,
+        date: new Date().toLocaleString("th-TH"),
+        channel: "CSV/Excel",
+        rows: rows.length,
+        status: "success",
+        fileName,
+        customerIds: newCustomers.map((c) => c.customer_id),
+        transactionIds: newTransactions.map((t) => t.transaction_id),
+      };
       setImportLog((prev) => {
         const next = [entry, ...prev];
         saveLS(LS_KEYS.importLog, next);
@@ -183,22 +195,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
         preview: rows.slice(0, 5),
       };
     } else if (isTransactions) {
+      const newTransactions = rows as unknown as RawTransaction[];
       setExtraTransactions((prev) => {
-        const next = [...prev, ...(rows as unknown as RawTransaction[])];
+        const next = [...prev, ...newTransactions];
         saveLS(LS_KEYS.extraTransactions, next);
         return next;
       });
-      entry = { id: `imp_${Date.now()}`, date: new Date().toLocaleString("th-TH"), channel: "CSV/Excel", rows: rows.length, status: "success" };
+      entry = {
+        id: importId,
+        date: new Date().toLocaleString("th-TH"),
+        channel: "CSV/Excel",
+        rows: rows.length,
+        status: "success",
+        fileName,
+        transactionIds: newTransactions.map((t) => t.transaction_id),
+      };
     } else if (isCustomers) {
+      const newCustomers = rows as unknown as RawCustomer[];
       setExtraCustomers((prev) => {
-        const next = [...prev, ...(rows as unknown as RawCustomer[])];
+        const next = [...prev, ...newCustomers];
         saveLS(LS_KEYS.extraCustomers, next);
         return next;
       });
-      entry = { id: `imp_${Date.now()}`, date: new Date().toLocaleString("th-TH"), channel: "CSV/Excel", rows: rows.length, status: "success" };
+      entry = {
+        id: importId,
+        date: new Date().toLocaleString("th-TH"),
+        channel: "CSV/Excel",
+        rows: rows.length,
+        status: "success",
+        fileName,
+        customerIds: newCustomers.map((c) => c.customer_id),
+      };
     } else {
       entry = {
-        id: `imp_${Date.now()}`,
+        id: importId,
         date: new Date().toLocaleString("th-TH"),
         channel: "CSV/Excel",
         rows: 0,
@@ -221,6 +251,47 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return { ok: true, message: `นำเข้าแล้ว ${rows.length} แถวจากไฟล์ "${fileName}"`, preview: rows.slice(0, 5) };
   }
 
+  function removeImport(id: string) {
+    const target = importLog.find((e) => e.id === id);
+    if (!target) return;
+    if (target.customerIds?.length) {
+      const remove = new Set(target.customerIds);
+      setExtraCustomers((prev) => {
+        const next = prev.filter((c) => !remove.has(c.customer_id));
+        saveLS(LS_KEYS.extraCustomers, next);
+        return next;
+      });
+    }
+    if (target.transactionIds?.length) {
+      const remove = new Set(target.transactionIds);
+      setExtraTransactions((prev) => {
+        const next = prev.filter((t) => !remove.has(t.transaction_id));
+        saveLS(LS_KEYS.extraTransactions, next);
+        return next;
+      });
+    }
+    setImportLog((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      saveLS(LS_KEYS.importLog, next);
+      return next;
+    });
+  }
+
+  function clearAllImports() {
+    setExtraCustomers(() => {
+      saveLS(LS_KEYS.extraCustomers, []);
+      return [];
+    });
+    setExtraTransactions(() => {
+      saveLS(LS_KEYS.extraTransactions, []);
+      return [];
+    });
+    setImportLog(() => {
+      saveLS(LS_KEYS.importLog, []);
+      return [];
+    });
+  }
+
   const value: DataContextValue = {
     loading,
     error,
@@ -232,6 +303,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     updateCampaignStatus,
     importLog,
     importCsvFile,
+    removeImport,
+    clearAllImports,
     segmentCounts,
   };
 

@@ -118,8 +118,16 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function Import() {
-  const { importLog, rawTransactions, customers } = useData();
+  const { importLog, rawTransactions, customers, removeImport, clearAllImports } = useData();
   const [modalOpen, setModalOpen] = useState(false);
+
+  function handleRemove(id: string) {
+    if (window.confirm("ยกเลิกการนำเข้ารายการนี้และลบข้อมูลที่นำเข้ามาทั้งหมด?")) removeImport(id);
+  }
+
+  function handleClearAll() {
+    if (window.confirm("ล้างข้อมูลที่นำเข้าทั้งหมด (ทุกไฟล์) และกลับไปใช้ข้อมูลตั้งต้นเท่านั้น?")) clearAllImports();
+  }
 
   return (
     <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
@@ -161,6 +169,11 @@ export default function Import() {
             <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>ประวัติการนำเข้า</p>
             <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>รายการทั้งหมด {importLog.length} รายการ</p>
           </div>
+          {importLog.length > 0 && (
+            <button onClick={handleClearAll} className="text-xs font-medium px-3 py-1.5 rounded-lg" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
+              ล้างข้อมูลที่นำเข้าทั้งหมด
+            </button>
+          )}
         </div>
         {importLog.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีการนำเข้าไฟล์เพิ่มเติม (ข้อมูลเริ่มต้นมาจาก customers.csv และ transactions.csv)</p>
@@ -169,20 +182,32 @@ export default function Import() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--color-rule)" }}>
-                  {["วันที่ / เวลา", "ช่องทาง", "จำนวนแถว", "สถานะ"].map((h, i) => (
-                    <th key={h} className={`px-6 py-3 text-xs font-medium tracking-wide uppercase ${i === 2 ? "text-right" : "text-left"}`} style={{ color: "var(--color-ink-3)" }}>{h}</th>
+                  {["วันที่ / เวลา", "ช่องทาง", "จำนวนแถว", "สถานะ", ""].map((h, i) => (
+                    <th key={h || "actions"} className={`px-6 py-3 text-xs font-medium tracking-wide uppercase ${i === 2 ? "text-right" : "text-left"}`} style={{ color: "var(--color-ink-3)" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {importLog.map((log, i) => (
-                  <tr key={log.id} style={{ borderBottom: i < importLog.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
-                    <td className="px-6 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{log.date}</td>
-                    <td className="px-6 py-3.5"><span className="text-sm font-medium" style={{ color: "var(--color-ink)" }}>{log.channel}</span></td>
-                    <td className="px-6 py-3.5 text-right font-semibold tabular-nums text-sm" style={{ color: log.rows === 0 ? "var(--color-ink-3)" : "var(--color-ink)" }}>{log.rows === 0 ? "—" : log.rows.toLocaleString("th-TH")}</td>
-                    <td className="px-6 py-3.5"><StatusBadge status={log.status} /></td>
-                  </tr>
-                ))}
+                {importLog.map((log, i) => {
+                  const canUndo = log.status === "success" && (log.customerIds !== undefined || log.transactionIds !== undefined);
+                  return (
+                    <tr key={log.id} style={{ borderBottom: i < importLog.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
+                      <td className="px-6 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{log.date}</td>
+                      <td className="px-6 py-3.5"><span className="text-sm font-medium" style={{ color: "var(--color-ink)" }}>{log.channel}</span></td>
+                      <td className="px-6 py-3.5 text-right font-semibold tabular-nums text-sm" style={{ color: log.rows === 0 ? "var(--color-ink-3)" : "var(--color-ink)" }}>{log.rows === 0 ? "—" : log.rows.toLocaleString("th-TH")}</td>
+                      <td className="px-6 py-3.5"><StatusBadge status={log.status} /></td>
+                      <td className="px-6 py-3.5 text-right">
+                        {canUndo ? (
+                          <button onClick={() => handleRemove(log.id)} className="text-xs font-medium" style={{ background: "none", border: "none", color: "var(--color-ink-3)", cursor: "pointer" }}>
+                            ลบ
+                          </button>
+                        ) : log.status === "success" ? (
+                          <span className="text-xs" style={{ color: "var(--color-ink-3)" }} title="นำเข้าก่อนมีฟีเจอร์นี้ — ใช้ปุ่ม &quot;ล้างข้อมูลที่นำเข้าทั้งหมด&quot; แทน">—</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

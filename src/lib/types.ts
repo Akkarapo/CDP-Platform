@@ -73,4 +73,9 @@ export interface ImportLogEntry {
   rows: number;
   status: "success" | "error";
   note?: string;
+  fileName?: string;
+  // IDs this import added, so it can be undone precisely. Absent on imports
+  // logged before this field existed.
+  customerIds?: string[];
+  transactionIds?: string[];
 }
