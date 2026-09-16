@@ -28,6 +28,58 @@ function saveLS<T>(key: string, value: T) {
 
 const CUSTOMER_HEADERS = ["customer_id", "full_name", "phone", "email", "member_tier"];
 const TRANSACTION_HEADERS = ["transaction_id", "customer_id", "product_name", "line_total"];
+// POS "combined" export: one row per event (registration / purchase / return /
+// points redemption), sharing customer and product columns on the same line
+// instead of splitting them into separate customer and transaction files.
+const EVENT_LOG_HEADERS = ["event_id", "event_type", "event_datetime", "customer_id", "product_id", "full_name"];
+
+function splitEventLog(rows: Record<string, string>[], existingCustomerIds: Set<string>) {
+  const customers: RawCustomer[] = [];
+  const seenCustomerIds = new Set<string>();
+  const transactions: RawTransaction[] = [];
+  for (const r of rows) {
+    if (r.product_id) {
+      transactions.push({
+        transaction_id: r.event_id,
+        customer_id: r.customer_id,
+        purchase_datetime: r.event_datetime,
+        product_id: r.product_id,
+        product_name: r.product_name,
+        category: r.category,
+        quantity: r.quantity,
+        unit_price: r.unit_price,
+        line_total: r.line_total,
+        payment_method: r.payment_method,
+        store_branch: r.store_branch,
+      });
+    }
+    // Bio columns are only populated for members (registration + their own
+    // purchase rows); guest rows leave full_name blank and are skipped here.
+    if (r.full_name && !seenCustomerIds.has(r.customer_id) && !existingCustomerIds.has(r.customer_id)) {
+      seenCustomerIds.add(r.customer_id);
+      customers.push({
+        customer_id: r.customer_id,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        full_name: r.full_name,
+        gender: r.gender,
+        phone: r.phone,
+        email: r.email,
+        birthdate: r.birthdate,
+        address: r.address,
+        district: r.district,
+        province: r.province,
+        postal_code: r.postal_code,
+        register_date: r.register_date,
+        member_tier: r.member_tier,
+        points_balance: r.points_balance,
+        acquisition_channel: r.acquisition_channel,
+        is_active: r.is_active,
+      });
+    }
+  }
+  return { customers, transactions };
+}
 
 interface DataContextValue {
   loading: boolean;
@@ -101,11 +153,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return { ok: false, message: "ไฟล์ว่างเปล่าหรืออ่านไม่ได้", preview: [] };
     }
     const headers = Object.keys(rows[0]);
+    const isEventLog = EVENT_LOG_HEADERS.every((h) => headers.includes(h));
     const isCustomers = CUSTOMER_HEADERS.every((h) => headers.includes(h));
     const isTransactions = TRANSACTION_HEADERS.every((h) => headers.includes(h));
 
     let entry: ImportLogEntry;
-    if (isTransactions) {
+    if (isEventLog) {
+      const existingCustomerIds = new Set(allCustomersRaw.map((c) => c.customer_id));
+      const { customers: newCustomers, transactions: newTransactions } = splitEventLog(rows, existingCustomerIds);
+      setExtraCustomers((prev) => {
+        const next = [...prev, ...newCustomers];
+        saveLS(LS_KEYS.extraCustomers, next);
+        return next;
+      });
+      setExtraTransactions((prev) => {
+        const next = [...prev, ...newTransactions];
+        saveLS(LS_KEYS.extraTransactions, next);
+        return next;
+      });
+      entry = { id: `imp_${Date.now()}`, date: new Date().toLocaleString("th-TH"), channel: "CSV/Excel", rows: rows.length, status: "success" };
+      setImportLog((prev) => {
+        const next = [entry, ...prev];
+        saveLS(LS_KEYS.importLog, next);
+        return next;
+      });
+      return {
+        ok: true,
+        message: `นำเข้าแล้ว ${newCustomers.length} ลูกค้าใหม่ และ ${newTransactions.length} ธุรกรรมจากไฟล์ "${fileName}"`,
+        preview: rows.slice(0, 5),
+      };
+    } else if (isTransactions) {
       setExtraTransactions((prev) => {
         const next = [...prev, ...(rows as unknown as RawTransaction[])];
         saveLS(LS_KEYS.extraTransactions, next);

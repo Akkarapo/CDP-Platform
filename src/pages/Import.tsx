@@ -50,7 +50,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
               {result ? `ผลการนำเข้า — ${fileName}` : "อัปโหลดไฟล์ CSV"}
             </h2>
             <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>
-              {result ? "" : "รองรับไฟล์ CSV ของลูกค้า (customer_id, full_name, ...) หรือธุรกรรม (transaction_id, product_name, ...)"}
+              {result ? "" : "รองรับไฟล์ CSV ของลูกค้า (customer_id, full_name, ...), ธุรกรรม (transaction_id, product_name, ...) หรือ event log แบบรวม (event_id, event_type, ...)"}
             </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ color: "var(--color-ink-3)", background: "none", border: "none", cursor: "pointer" }}>
