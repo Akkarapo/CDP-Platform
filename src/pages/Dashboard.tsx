@@ -90,6 +90,20 @@ export default function Dashboard() {
 
   const rfmMatrix = useMemo(() => buildRfmMatrixStats(customers), [customers]);
 
+  // Track sizes follow real customer counts (treemap-style) instead of an
+  // even 3x3 split, so a segment's box visibly reflects how many people are
+  // actually in it. A floor keeps near-empty segments legible.
+  const rfmTracks = useMemo(() => {
+    const colTotal = (band: 0 | 1 | 2) => rfmMatrix.filter((c) => c.rBand === band).reduce((s, c) => s + c.count, 0);
+    const rowTotal = (band: 0 | 1 | 2) => rfmMatrix.filter((c) => c.fmBand === band).reduce((s, c) => s + c.count, 0);
+    const cols = ([0, 1, 2] as const).map((b) => Math.max(colTotal(b), 1));
+    const rows = ([2, 1, 0] as const).map((b) => Math.max(rowTotal(b), 1));
+    return {
+      gridTemplateColumns: cols.map((v) => `minmax(120px, ${v}fr)`).join(" "),
+      gridTemplateRows: rows.map((v) => `minmax(92px, ${v}fr)`).join(" "),
+    };
+  }, [rfmMatrix]);
+
   const recentCampaigns = campaigns.slice(0, 5);
 
   if (loading) {
@@ -150,11 +164,11 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex-1">
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid gap-3" style={rfmTracks}>
               {rfmMatrix.map((cell) => {
                 const c = TIER_COLOR[cell.tier];
                 return (
-                  <div key={cell.key} className="rounded-xl p-3.5 flex flex-col justify-between" style={{ backgroundColor: c.bg, minHeight: 108 }}>
+                  <div key={cell.key} className="rounded-xl p-3.5 flex flex-col justify-between overflow-hidden" style={{ backgroundColor: c.bg }}>
                     <div>
                       <p className="text-sm font-semibold" style={{ color: c.color }}>{cell.label}</p>
                       <p className="text-xs mt-1 leading-snug" style={{ color: c.color, opacity: 0.85 }}>{cell.description}</p>
