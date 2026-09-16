@@ -1,0 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Serif+Display&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'DM Sans', sans-serif;
+  --font-serif: 'DM Serif Display', serif;
+  --color-ground: #F5F3F0;
+  --color-surface: #FFFFFF;
+  --color-ink: #1A1917;
+  --color-ink-2: #6B6860;
+  --color-ink-3: #A8A59F;
+  --color-rule: #E2DED9;
+  --color-accent: #2563EB;
+}
