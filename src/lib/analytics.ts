@@ -107,7 +107,7 @@ export function buildCustomers(
       province: c.province,
       registerDate: c.register_date,
       memberTier: c.member_tier,
-      isActive: c.is_active.toUpperCase() === "TRUE",
+      isActive: (c.is_active ?? "").toUpperCase() === "TRUE",
       segment,
       totalSpend: monetary,
       orderCount: frequency,
