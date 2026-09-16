@@ -162,22 +162,20 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex-1">
-            <div className="flex flex-col gap-3" style={{ height: 420 }}>
+            <div className="flex flex-col gap-3" style={{ height: 480 }}>
               {rfmRows.map((row, ri) => (
-                <div key={ri} className="flex gap-3" style={{ flexGrow: row.total, flexBasis: 0, minHeight: 72 }}>
+                <div key={ri} className="flex gap-3" style={{ flexGrow: row.total, flexBasis: 0, minHeight: 84 }}>
                   {row.cells.map((cell) => {
                     const c = TIER_COLOR[cell.tier];
                     return (
                       <div
                         key={cell.key}
+                        title={cell.description}
                         className="rounded-xl p-3.5 flex flex-col justify-between overflow-hidden"
-                        style={{ backgroundColor: c.bg, flexGrow: Math.max(cell.count, 1), flexBasis: 0, minWidth: 96 }}
+                        style={{ backgroundColor: c.bg, flexGrow: Math.max(cell.count, 1), flexBasis: 0, minWidth: 100 }}
                       >
-                        <div>
-                          <p className="text-sm font-semibold" style={{ color: c.color }}>{cell.label}</p>
-                          <p className="text-xs mt-1 leading-snug" style={{ color: c.color, opacity: 0.85 }}>{cell.description}</p>
-                        </div>
-                        <div className="flex items-end justify-between mt-2">
+                        <p className="text-sm font-semibold leading-snug" style={{ color: c.color }}>{cell.label}</p>
+                        <div className="flex items-end justify-between">
                           <span className="text-xl font-semibold tabular-nums" style={{ color: c.color }}>{cell.count.toLocaleString("th-TH")}</span>
                           <span className="text-xs font-medium tabular-nums" style={{ color: c.color, opacity: 0.85 }}>{cell.pct}%</span>
                         </div>
@@ -187,7 +185,7 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-            <p className="text-xs text-center mt-2" style={{ color: "var(--color-ink-3)" }}>Recency →</p>
+            <p className="text-xs text-center mt-2" style={{ color: "var(--color-ink-3)" }}>Recency → (วางเมาส์บนช่องเพื่อดูคำอธิบาย)</p>
           </div>
         </div>
       </div>
