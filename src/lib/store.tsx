@@ -71,10 +71,12 @@ function splitEventLog(rows: Record<string, string>[], existingCustomerIds: Set<
         province: r.province,
         postal_code: r.postal_code,
         register_date: r.register_date,
-        member_tier: r.member_tier,
-        points_balance: r.points_balance,
+        // Some exports (e.g. a "new customers" feed) omit tier/points/active
+        // columns entirely since a brand-new member hasn't accrued any yet.
+        member_tier: r.member_tier || "Bronze",
+        points_balance: r.points_balance || "0",
         acquisition_channel: r.acquisition_channel,
-        is_active: r.is_active,
+        is_active: r.is_active || "TRUE",
       });
     }
   }
