@@ -217,8 +217,8 @@ export default function SegmentProfile() {
             <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีข้อมูล</p>
           ) : (
             <div className="space-y-2.5">
-              {segStats.topProducts.slice(0, 5).map((p, i) => {
-                const maxSold = segStats.topProducts[0].sold;
+              {segStats.topProducts.slice(0, 5).map((p, i, arr) => {
+                const maxSold = Math.max(...arr.map((x) => x.sold));
                 const barW = maxSold ? Math.round((p.sold / maxSold) * 100) : 0;
                 return (
                   <div key={p.name} className="flex items-center gap-3">
