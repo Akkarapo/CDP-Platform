@@ -122,6 +122,53 @@ export function buildCustomers(
   });
 }
 
+// Standard 3x3 RFM segmentation matrix: Recency score (x-axis) against the
+// average of Frequency and Monetary scores (y-axis), each bucketed into
+// low/mid/high thirds of the 1-10 decile scale. Listed high-FM row first so
+// callers can render it directly, top-to-bottom, into a 3-column grid.
+export interface RfmCell {
+  key: string;
+  label: string;
+  description: string;
+  tier: "good" | "watch" | "risk";
+  rBand: 0 | 1 | 2;
+  fmBand: 0 | 1 | 2;
+}
+
+export const RFM_MATRIX: RfmCell[] = [
+  { key: "at-risk", label: "At Risk", description: "เคยซื้อบ่อย/มูลค่าสูง แต่หายไปนาน ต้องรีบดึงกลับ", tier: "risk", rBand: 0, fmBand: 2 },
+  { key: "loyal", label: "Loyal Customers", description: "ซื้อสม่ำเสมอและมูลค่าสูง ลูกค้าประจำที่ไว้ใจได้", tier: "good", rBand: 1, fmBand: 2 },
+  { key: "champions", label: "Champions", description: "ซื้อเมื่อไม่นานมานี้ บ่อย และมูลค่าสูงที่สุด", tier: "good", rBand: 2, fmBand: 2 },
+  { key: "hibernating", label: "Hibernating", description: "เคยซื้อพอประมาณ แต่เงียบไปนาน", tier: "watch", rBand: 0, fmBand: 1 },
+  { key: "need-attention", label: "Need Attention", description: "ค่าเฉลี่ยกลางๆ ทุกด้าน ต้องกระตุ้นก่อนหลุดมือ", tier: "watch", rBand: 1, fmBand: 1 },
+  { key: "potential-loyalist", label: "Potential Loyalist", description: "เพิ่งซื้อไม่นาน ความถี่/มูลค่าปานกลาง มีแนวโน้มเป็นลูกค้าประจำ", tier: "good", rBand: 2, fmBand: 1 },
+  { key: "lost", label: "Lost", description: "ไม่ได้ซื้อมานาน ความถี่/มูลค่าต่ำ มีโอกาสดึงกลับต่ำ", tier: "risk", rBand: 0, fmBand: 0 },
+  { key: "about-to-sleep", label: "About to Sleep", description: "ซื้อน้อย และเริ่มห่างหาย ควรกระตุ้นก่อนกลายเป็น Lost", tier: "watch", rBand: 1, fmBand: 0 },
+  { key: "new-customers", label: "New Customers", description: "เพิ่งซื้อครั้งแรกหรือไม่นานมานี้ ยังซื้อน้อย", tier: "good", rBand: 2, fmBand: 0 },
+];
+
+function rfmBand(score: number): 0 | 1 | 2 {
+  return score <= 3 ? 0 : score <= 6 ? 1 : 2;
+}
+
+export function classifyRfmCell(recency: number, frequency: number, monetary: number): RfmCell {
+  const rBand = rfmBand(recency);
+  const fmBand = rfmBand((frequency + monetary) / 2);
+  return RFM_MATRIX.find((c) => c.rBand === rBand && c.fmBand === fmBand)!;
+}
+
+export function buildRfmMatrixStats(customers: Customer[]) {
+  const counts = new Map<string, number>();
+  for (const c of customers) {
+    const cell = classifyRfmCell(c.rfm.recency, c.rfm.frequency, c.rfm.monetary);
+    counts.set(cell.key, (counts.get(cell.key) ?? 0) + 1);
+  }
+  return RFM_MATRIX.map((cell) => {
+    const count = counts.get(cell.key) ?? 0;
+    return { ...cell, count, pct: customers.length ? Math.round((count / customers.length) * 100) : 0 };
+  });
+}
+
 export interface ProductStat {
   name: string;
   category: string;

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { fetchCsv, parseCsv } from "./csv";
 import { buildCustomers, buildProductStats } from "./analytics";
-import type { RawCustomer, RawTransaction, Customer, CampaignRecord, ImportLogEntry, Segment } from "./types";
+import type { RawCustomer, RawTransaction, Customer, CampaignRecord, ImportLogEntry } from "./types";
 
 const LS_KEYS = {
   extraCustomers: "cdp.extraCustomers",
@@ -96,7 +96,6 @@ interface DataContextValue {
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
   removeImport: (id: string) => void;
   clearAllImports: () => void;
-  segmentCounts: Record<Segment, number>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -129,12 +128,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [allCustomersRaw, allTransactionsRaw, campaigns]
   );
   const productStats = useMemo(() => buildProductStats(allTransactionsRaw), [allTransactionsRaw]);
-
-  const segmentCounts = useMemo(() => {
-    const counts: Record<Segment, number> = { Premium: 0, Regular: 0, New: 0, Dormant: 0 };
-    for (const c of customers) counts[c.segment]++;
-    return counts;
-  }, [customers]);
 
   function addCampaign(c: Omit<CampaignRecord, "id" | "createdAt">) {
     setCampaigns((prev) => {
@@ -326,7 +319,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     importCsvFile,
     removeImport,
     clearAllImports,
-    segmentCounts,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

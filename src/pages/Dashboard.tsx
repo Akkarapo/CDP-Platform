@@ -1,16 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell,
+  ResponsiveContainer,
 } from "recharts";
 import { useData } from "../lib/store";
-import type { Segment } from "../lib/types";
+import { buildRfmMatrixStats } from "../lib/analytics";
 
-const SEGMENT_COLOR: Record<Segment, string> = {
-  Premium: "#1A1917",
-  Regular: "#6B6860",
-  New: "#A8A59F",
-  Dormant: "#D5D1CC",
+const TIER_COLOR: Record<"good" | "watch" | "risk", { bg: string; color: string }> = {
+  good: { bg: "#DCFCE7", color: "#166534" },
+  watch: { bg: "#FEF3C7", color: "#92400E" },
+  risk: { bg: "#FEE2E2", color: "#991B1B" },
 };
 
 const STATUS: Record<string, { label: string; bg: string; color: string }> = {
@@ -45,19 +44,8 @@ function SaleTip({ active, payload, label }: any) {
   );
 }
 
-function DonutTip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-xl px-3 py-2 text-xs" style={{ backgroundColor: "var(--color-ink)", color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.2)" }}>
-      <span className="font-medium">{payload[0].name}</span>
-      <span className="ml-2 font-semibold">{payload[0].value}%</span>
-    </div>
-  );
-}
-
 export default function Dashboard() {
-  const { customers, rawTransactions, campaigns, segmentCounts, loading } = useData();
-  const [activeSegment, setActiveSegment] = useState<number | null>(null);
+  const { customers, rawTransactions, campaigns, loading } = useData();
 
   const dailySales = useMemo(() => {
     if (rawTransactions.length === 0) return [];
@@ -100,11 +88,7 @@ export default function Dashboard() {
   const totalOrders = customers.reduce((s, c) => s + c.orderCount, 0);
   const aov = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-  const segmentData = (Object.keys(segmentCounts) as Segment[]).map((s) => ({
-    name: s,
-    value: customers.length ? Math.round((segmentCounts[s] / customers.length) * 100) : 0,
-    color: SEGMENT_COLOR[s],
-  }));
+  const rfmMatrix = useMemo(() => buildRfmMatrixStats(customers), [customers]);
 
   const recentCampaigns = campaigns.slice(0, 5);
 
@@ -130,8 +114,7 @@ export default function Dashboard() {
         <StatCard label="มูลค่าเฉลี่ย/ออเดอร์ (AOV)" value={`฿${aov.toLocaleString("th-TH", { maximumFractionDigits: 0 })}`} sub="คำนวณจากข้อมูลจริง" />
       </div>
 
-      <div className="grid grid-cols-5 gap-4">
-        <div className="col-span-3 rounded-2xl px-6 pt-6 pb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+      <div className="rounded-2xl px-6 pt-6 pb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
           <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>ยอดขายรายวัน</p>
           <p className="text-xs mb-5" style={{ color: "var(--color-ink-3)" }}>30 วันล่าสุดในข้อมูล + พยากรณ์ 7 วันข้างหน้า (แนวโน้มเชิงเส้นอย่างง่าย ไม่ใช่โมเดล ML)</p>
           <ResponsiveContainer width="100%" height={220}>
@@ -152,38 +135,39 @@ export default function Dashboard() {
               <span className="inline-block w-3 h-0.5" style={{ backgroundColor: "var(--color-ink-3)", backgroundImage: "repeating-linear-gradient(90deg, var(--color-ink-3) 0 3px, transparent 3px 6px)" }} /> พยากรณ์ 7 วัน
             </span>
           </div>
-        </div>
+      </div>
 
-        <div className="col-span-2 rounded-2xl px-6 pt-6 pb-5 flex flex-col" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-          <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>กลุ่มลูกค้า</p>
-          <p className="text-xs mb-4" style={{ color: "var(--color-ink-3)" }}>สัดส่วนตาม Segment (คำนวณจาก RFM จริง)</p>
-          <div className="flex-1 flex items-center justify-center">
-            <ResponsiveContainer width="100%" height={170}>
-              <PieChart>
-                <Pie
-                  data={segmentData} cx="50%" cy="50%" innerRadius={52} outerRadius={76}
-                  strokeWidth={2} stroke="var(--color-surface)" dataKey="value"
-                  onMouseEnter={(_, i) => setActiveSegment(i)}
-                  onMouseLeave={() => setActiveSegment(null)}
-                >
-                  {segmentData.map((s, i) => (
-                    <Cell key={s.name} fill={s.color} opacity={activeSegment === null || activeSegment === i ? 1 : 0.45} style={{ cursor: "pointer", transition: "opacity 0.15s" }} />
-                  ))}
-                </Pie>
-                <Tooltip content={<DonutTip />} />
-              </PieChart>
-            </ResponsiveContainer>
+      <div className="rounded-2xl px-6 pt-6 pb-6" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>กลุ่มลูกค้าตาม RFM</p>
+        <p className="text-xs mb-5" style={{ color: "var(--color-ink-3)" }}>Recency (แกนนอน) x Frequency &amp; Monetary (แกนตั้ง) — คำนวณสดจากข้อมูลลูกค้าจริงทั้งหมด</p>
+        <div className="flex gap-3">
+          <div className="flex flex-col items-center justify-center pb-6" style={{ width: 20 }}>
+            <span
+              className="text-xs font-medium tracking-wide uppercase whitespace-nowrap"
+              style={{ color: "var(--color-ink-3)", writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            >
+              Frequency &amp; Monetary ↑
+            </span>
           </div>
-          <div className="space-y-2 mt-1">
-            {segmentData.map((s, i) => (
-              <div key={s.name} className="flex items-center justify-between" style={{ opacity: activeSegment === null || activeSegment === i ? 1 : 0.45, transition: "opacity 0.15s" }}>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
-                  <span className="text-xs" style={{ color: "var(--color-ink-2)" }}>{s.name}</span>
-                </div>
-                <span className="text-xs font-semibold" style={{ color: "var(--color-ink)" }}>{s.value}%</span>
-              </div>
-            ))}
+          <div className="flex-1">
+            <div className="grid grid-cols-3 gap-2.5">
+              {rfmMatrix.map((cell) => {
+                const c = TIER_COLOR[cell.tier];
+                return (
+                  <div key={cell.key} className="rounded-xl p-3.5 flex flex-col justify-between" style={{ backgroundColor: c.bg, minHeight: 108 }}>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: c.color }}>{cell.label}</p>
+                      <p className="text-xs mt-1 leading-snug" style={{ color: c.color, opacity: 0.85 }}>{cell.description}</p>
+                    </div>
+                    <div className="flex items-end justify-between mt-2">
+                      <span className="text-xl font-semibold tabular-nums" style={{ color: c.color }}>{cell.count.toLocaleString("th-TH")}</span>
+                      <span className="text-xs font-medium tabular-nums" style={{ color: c.color, opacity: 0.85 }}>{cell.pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-center mt-2" style={{ color: "var(--color-ink-3)" }}>Recency →</p>
           </div>
         </div>
       </div>
