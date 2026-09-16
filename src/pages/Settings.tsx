@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 
 type Role = "Admin" | "Editor" | "Viewer";
@@ -78,8 +77,7 @@ function InviteModal({ onClose, onInvite }: { onClose: () => void; onInvite: (na
 }
 
 export default function Settings() {
-  const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
 
   const [posKey, setPosKey] = useState(() => localStorage.getItem("cdp.posKey") ?? "");
   const [posEndpoint, setPosEndpoint] = useState(() => localStorage.getItem("cdp.posEndpoint") ?? "");
@@ -132,9 +130,6 @@ export default function Settings() {
               </div>
             </div>
           </div>
-          <button onClick={() => { signOut(); navigate("/"); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
-            ออกจากระบบ
-          </button>
         </div>
       </SectionCard>
 
