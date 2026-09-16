@@ -34,10 +34,13 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 
 function SaleTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
+  const point = payload.find((p: any) => p.dataKey === "amount" && p.value != null) ?? payload.find((p: any) => p.dataKey === "forecast" && p.value != null);
+  if (!point) return null;
+  const isForecast = point.dataKey === "forecast";
   return (
     <div className="rounded-xl px-4 py-3 text-xs" style={{ backgroundColor: "var(--color-ink)", color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.2)" }}>
-      <div className="font-medium mb-1" style={{ color: "#A8A59F" }}>{label}</div>
-      <div className="font-semibold text-sm">{Number(payload[0].value).toLocaleString("th-TH")} ฿</div>
+      <div className="font-medium mb-1" style={{ color: "#A8A59F" }}>{label}{isForecast ? " (พยากรณ์)" : ""}</div>
+      <div className="font-semibold text-sm">{Number(point.value).toLocaleString("th-TH")} ฿</div>
     </div>
   );
 }
@@ -61,12 +64,34 @@ export default function Dashboard() {
     const maxDate = new Date(Math.max(...rawTransactions.map((t) => +new Date(t.purchase_datetime))));
     const byDay = new Map<string, number>();
     for (const t of rawTransactions) byDay.set(t.purchase_datetime.slice(0, 10), (byDay.get(t.purchase_datetime.slice(0, 10)) ?? 0) + Number(t.line_total || 0));
-    const points: { date: string; amount: number }[] = [];
+    const fmt = (d: Date) => d.toLocaleDateString("th-TH-u-ca-gregory", { day: "numeric", month: "short" });
+
+    const points: { date: string; amount: number | null; forecast: number | null }[] = [];
     for (let i = 29; i >= 0; i--) {
       const d = new Date(maxDate);
       d.setDate(d.getDate() - i);
       const key = d.toISOString().slice(0, 10);
-      points.push({ date: d.toLocaleDateString("th-TH-u-ca-gregory", { day: "numeric", month: "short" }), amount: byDay.get(key) ?? 0 });
+      points.push({ date: fmt(d), amount: byDay.get(key) ?? 0, forecast: null });
+    }
+
+    // ponytail: naive least-squares trend line over the last 14 real days, extrapolated
+    // 7 days forward — not a real forecasting model (no seasonality, no ML). Upgrade to a
+    // proper time-series model (e.g. Prophet-style) if this ever needs to be accurate.
+    const recent = points.slice(-14).map((p, i) => [i, p.amount as number] as const);
+    const n = recent.length;
+    const sumX = recent.reduce((s, [x]) => s + x, 0);
+    const sumY = recent.reduce((s, [, y]) => s + y, 0);
+    const sumXY = recent.reduce((s, [x, y]) => s + x * y, 0);
+    const sumXX = recent.reduce((s, [x]) => s + x * x, 0);
+    const denom = n * sumXX - sumX * sumX;
+    const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
+    const intercept = (sumY - slope * sumX) / n;
+
+    points[points.length - 1].forecast = points[points.length - 1].amount;
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(maxDate);
+      d.setDate(d.getDate() + i);
+      points.push({ date: fmt(d), amount: null, forecast: Math.max(0, Math.round(intercept + slope * (n - 1 + i))) });
     }
     return points;
   }, [rawTransactions]);
@@ -108,16 +133,25 @@ export default function Dashboard() {
       <div className="grid grid-cols-5 gap-4">
         <div className="col-span-3 rounded-2xl px-6 pt-6 pb-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
           <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>ยอดขายรายวัน</p>
-          <p className="text-xs mb-5" style={{ color: "var(--color-ink-3)" }}>30 วันล่าสุดในข้อมูล (จากไฟล์ transactions.csv)</p>
+          <p className="text-xs mb-5" style={{ color: "var(--color-ink-3)" }}>30 วันล่าสุดในข้อมูล + พยากรณ์ 7 วันข้างหน้า (แนวโน้มเชิงเส้นอย่างง่าย ไม่ใช่โมเดล ML)</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={dailySales} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="0" stroke="var(--color-rule)" vertical={false} strokeWidth={1} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--color-ink-3)", fontFamily: "var(--font-sans)" }} tickLine={false} axisLine={false} interval={4} />
               <YAxis tick={{ fontSize: 10, fill: "var(--color-ink-3)", fontFamily: "var(--font-sans)" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={36} />
               <Tooltip content={<SaleTip />} cursor={{ stroke: "var(--color-ink-3)", strokeWidth: 1, strokeDasharray: "4 3" }} />
-              <Line type="monotone" dataKey="amount" stroke="var(--color-ink)" strokeWidth={2} dot={false} activeDot={{ r: 5, fill: "var(--color-ink)", stroke: "white", strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="amount" stroke="var(--color-ink)" strokeWidth={2} dot={false} connectNulls={false} activeDot={{ r: 5, fill: "var(--color-ink)", stroke: "white", strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="forecast" stroke="var(--color-ink-3)" strokeWidth={2} strokeDasharray="4 4" dot={false} connectNulls={true} activeDot={{ r: 5, fill: "var(--color-ink-3)", stroke: "white", strokeWidth: 2 }} />
             </LineChart>
           </ResponsiveContainer>
+          <div className="flex items-center gap-4 mt-2">
+            <span className="flex items-center gap-1.5 text-xs" style={{ color: "var(--color-ink-2)" }}>
+              <span className="inline-block w-3 h-0.5" style={{ backgroundColor: "var(--color-ink)" }} /> ยอดขายจริง
+            </span>
+            <span className="flex items-center gap-1.5 text-xs" style={{ color: "var(--color-ink-2)" }}>
+              <span className="inline-block w-3 h-0.5" style={{ backgroundColor: "var(--color-ink-3)", backgroundImage: "repeating-linear-gradient(90deg, var(--color-ink-3) 0 3px, transparent 3px 6px)" }} /> พยากรณ์ 7 วัน
+            </span>
+          </div>
         </div>
 
         <div className="col-span-2 rounded-2xl px-6 pt-6 pb-5 flex flex-col" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
