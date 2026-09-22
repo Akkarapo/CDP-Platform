@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateCampaign, type GenerateCampaignInput } from "./_lib/generateCampaign";
+import { generateCampaign, type GenerateCampaignInput } from "./_lib/generateCampaign.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {

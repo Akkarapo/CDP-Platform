@@ -24,7 +24,7 @@ const STATUS_META: Record<CampaignRecord["status"], { label: string; bg: string;
   sent: { label: "ส่งแล้ว", bg: "#DCFCE7", color: "#166534" },
 };
 
-function LineChatPreview({ message }: { message: string }) {
+function LineChatPreview({ message, imageUrl }: { message: string; imageUrl?: string }) {
   const lines = message.split("\n");
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--color-rule)" }}>
@@ -37,7 +37,13 @@ function LineChatPreview({ message }: { message: string }) {
           <p className="text-xs text-white mt-0.5" style={{ opacity: 0.75 }}>Official Account</p>
         </div>
       </div>
-      <div className="px-4 py-5" style={{ backgroundColor: "#87CEEB22", minHeight: 160 }}>
+      <div className="px-4 py-5 space-y-2" style={{ backgroundColor: "#87CEEB22", minHeight: 160 }}>
+        {imageUrl && (
+          <div className="flex gap-2.5 items-end">
+            <div className="w-8 h-8 flex-shrink-0" />
+            <img src={imageUrl} alt="" className="rounded-2xl max-w-xs max-h-48 object-cover" style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }} />
+          </div>
+        )}
         <div className="flex gap-2.5 items-end">
           <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm" style={{ border: "1.5px solid #00B90040" }}>
             <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M10 2C5.582 2 2 5.134 2 9c0 2.16 1.08 4.094 2.8 5.44-.11.48-.44 1.74-.5 2.02-.07.33.12.33.25.24.1-.07 1.62-1.07 2.28-1.51.36.05.73.08 1.17.08 4.418 0 8-3.134 8-7s-3.582-7-8-7z" fill="#00B900" /></svg>
@@ -58,6 +64,8 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   const [rfmFilter, setRfmFilter] = useState<RfmFilter>("ทุกกลุ่ม");
   const [prompt, setPrompt] = useState("");
   const [generated, setGenerated] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [campaignId, setCampaignId] = useState(() => crypto.randomUUID());
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +118,8 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "สร้างข้อความไม่สำเร็จ กรุณาลองใหม่");
-      setGenerated(data.message);
+      const trackingLink = `${window.location.origin}/api/track?c=${campaignId}`;
+      setGenerated(`${data.message}\n\n${trackingLink}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาดที่ไม่คาดคิด");
     } finally {
@@ -123,6 +132,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
     setSubmitError(null);
     try {
       await addCampaign({
+        id: campaignId,
         name: prompt.slice(0, 40) || `แคมเปญสำหรับ ${target}`,
         targetSegment: target,
         status: "pending",
@@ -130,6 +140,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
         prompt: prompt.trim(),
         churnFilterLabel: churnFilter === "ทุกระดับ" ? undefined : churnLabel,
         rfmFilterLabel: rfmFilter === "ทุกกลุ่ม" ? undefined : rfmLabel,
+        imageUrl: imageUrl.trim() || undefined,
       });
       setSubmitted(true);
     } catch (submitErr) {
@@ -147,7 +158,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           <p className="text-base font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>บันทึกแคมเปญแล้ว</p>
           <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>ดูสถานะและอัปเดตได้ที่แท็บ "ประวัติแคมเปญ"</p>
         </div>
-        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setGenerated(""); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setGenerated(""); setImageUrl(""); setCampaignId(crypto.randomUUID()); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
           สร้างแคมเปญใหม่
         </button>
       </div>
@@ -240,6 +251,16 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
               </div>
             </div>
           )}
+          <div>
+            <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>รูปภาพประกอบ (ลิงก์ URL, ไม่บังคับ)</label>
+            <input
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              placeholder="https://…jpg หรือ .png"
+              className="w-full rounded-xl px-4 py-2.5 text-sm outline-none"
+              style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)", fontFamily: "monospace" }}
+            />
+          </div>
           {error && (
             <p role="alert" className="text-xs leading-relaxed rounded-xl px-3.5 py-3" style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}>{error}</p>
           )}
@@ -260,7 +281,21 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           พรีวิวข้อความ
         </p>
         <div className="ml-7">
-          {generated ? <LineChatPreview message={generated} /> : (
+          {generated ? (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>แก้ไขข้อความก่อนบันทึก (มีลิงก์ติดตามแทรกให้อัตโนมัติแล้ว)</label>
+                <textarea
+                  value={generated}
+                  onChange={(e) => setGenerated(e.target.value)}
+                  rows={6}
+                  className="w-full rounded-xl px-4 py-3 text-sm resize-none outline-none"
+                  style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)", lineHeight: 1.6 }}
+                />
+              </div>
+              <LineChatPreview message={generated} imageUrl={imageUrl.trim() || undefined} />
+            </div>
+          ) : (
             <div className="rounded-2xl flex items-center justify-center py-12" style={{ border: "1.5px dashed var(--color-rule)" }}>
               <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>{target ? "กด \"สร้างแคมเปญด้วย AI\"" : "เลือกกลุ่มเป้าหมายก่อน"}</p>
             </div>
@@ -307,7 +342,35 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
 }
 
 function HistoryTab({ canEdit }: { canEdit: boolean }) {
-  const { campaigns, updateCampaignStatus } = useData();
+  const { campaigns, updateCampaignStatus, sendCampaign } = useData();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+
+  async function copyTrackingLink(campaignId: string) {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/api/track?c=${campaignId}`);
+      setCopiedId(campaignId);
+      setTimeout(() => setCopiedId((current) => (current === campaignId ? null : current)), 2000);
+    } catch {
+      // clipboard access denied — nothing actionable to show here
+    }
+  }
+
+  async function handleSend(campaignId: string) {
+    if (!window.confirm("ยืนยันส่งแคมเปญนี้ไปยังผู้ติดตาม LINE OA จริงหรือไม่?")) return;
+    setSendingId(campaignId);
+    setSendResult(null);
+    try {
+      const recipientCount = await sendCampaign(campaignId);
+      setSendResult({ id: campaignId, ok: true, message: `ส่งสำเร็จถึง ${recipientCount.toLocaleString("th-TH")} คน` });
+    } catch (err) {
+      setSendResult({ id: campaignId, ok: false, message: err instanceof Error ? err.message : "ส่งแคมเปญไม่สำเร็จ" });
+    } finally {
+      setSendingId(null);
+    }
+  }
+
   if (campaigns.length === 0) {
     return <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีแคมเปญ — สร้างได้จากแท็บ "สร้างแคมเปญ"</p>;
   }
@@ -342,13 +405,27 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
                 </td>
                 <td className="px-3 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{new Date(c.createdAt).toLocaleDateString("th-TH-u-ca-gregory")}</td>
                 <td className="px-3 py-3.5 text-right">
-                  {canEdit && c.status === "pending" && (
-                    <button onClick={() => void updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
+                  <div className="flex flex-col items-end gap-1.5">
+                  <div className="flex items-center justify-end gap-2">
+                    {canEdit && c.status === "pending" && (
+                      <button onClick={() => void updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
+                    )}
+                    {canEdit && c.status === "approved" && (
+                      <button onClick={() => void handleSend(c.id)} disabled={sendingId === c.id} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: sendingId === c.id ? "not-allowed" : "pointer", opacity: sendingId === c.id ? 0.6 : 1 }}>
+                        {sendingId === c.id ? "กำลังส่ง…" : "ส่งเข้า LINE จริง"}
+                      </button>
+                    )}
+                    {c.status !== "pending" && (
+                      <button onClick={() => void copyTrackingLink(c.id)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: copiedId === c.id ? "#DCFCE7" : "var(--color-ground)", color: copiedId === c.id ? "#166534" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
+                        {copiedId === c.id ? "คัดลอกแล้ว" : "คัดลอกลิงก์ติดตาม"}
+                      </button>
+                    )}
+                    {!canEdit && c.status === "pending" && <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>ดูอย่างเดียว</span>}
+                  </div>
+                  {sendResult?.id === c.id && (
+                    <p className="text-xs" style={{ color: sendResult.ok ? "#166534" : "#991B1B" }}>{sendResult.message}</p>
                   )}
-                  {canEdit && c.status === "approved" && (
-                    <button onClick={() => void updateCampaignStatus(c.id, "sent")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>ทำเครื่องหมายว่าส่งแล้ว</button>
-                  )}
-                  {!canEdit && <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>ดูอย่างเดียว</span>}
+                  </div>
                 </td>
               </tr>
             );

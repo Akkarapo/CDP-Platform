@@ -4,6 +4,9 @@ import { supabase } from "../lib/supabase";
 import { useData, MOCK_POS_KEY, MOCK_POS_ENDPOINT, MOCK_POS_TX_PREFIX, MOCK_POS_CUSTOMER_PREFIX } from "../lib/store";
 
 type TeamEntry = { id: string; name: string; email: string; role: WorkspaceRole; status: "active" | "pending"; isYou?: boolean };
+type LineSegment = "Premium" | "Regular" | "New" | "Dormant";
+type LineUserRow = { line_user_id: string; display_name: string | null; picture_url: string | null; last_message_text: string | null; last_message_at: string | null; followed: boolean; is_admin: boolean; segment: LineSegment | null };
+const LINE_SEGMENTS: LineSegment[] = ["Premium", "Regular", "New", "Dormant"];
 
 const ROLE_META: Record<WorkspaceRole, { label: string; bg: string; color: string }> = {
   admin: { label: "Admin", bg: "#1A1917", color: "#ffffff" },
@@ -61,14 +64,27 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
 }
 
 export default function Settings() {
-  const { user, role, canManageMembers } = useAuth();
+  const { user, role, canManageMembers, canEditCampaigns } = useAuth();
   const { customers, rawCustomers, rawTransactions, posConnected, connectPos, resetPos } = useData();
 
   const [posKey, setPosKey] = useState(() => localStorage.getItem("cdp.posKey") ?? "");
   const [posEndpoint, setPosEndpoint] = useState(() => localStorage.getItem("cdp.posEndpoint") ?? "");
   const [posError, setPosError] = useState<string | null>(null);
-  const [lineToken, setLineToken] = useState(() => localStorage.getItem("cdp.lineToken") ?? "");
-  const [saved, setSaved] = useState<string | null>(null);
+
+  const [lineStatus, setLineStatus] = useState<{ connected: boolean; channelId: string | null; basicId: string | null; addFriendUrl: string | null } | null>(null);
+  const [lineStatusError, setLineStatusError] = useState<string | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const [testUserId, setTestUserId] = useState("");
+  const [testMessage, setTestMessage] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const [lineUsers, setLineUsers] = useState<LineUserRow[]>([]);
+  const [loadingLineUsers, setLoadingLineUsers] = useState(false);
+  const [lineUsersError, setLineUsersError] = useState<string | null>(null);
+  const [syncingFollowers, setSyncingFollowers] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [copiedLineUserId, setCopiedLineUserId] = useState<string | null>(null);
 
   const [team, setTeam] = useState<TeamEntry[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(false);
@@ -131,10 +147,105 @@ export default function Settings() {
     }));
   }, [mockTransactions, customers]);
 
-  function save(key: string, value: string, label: string) {
-    localStorage.setItem(key, value);
-    setSaved(label);
-    setTimeout(() => setSaved(null), 2000);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/line-status")
+      .then((res) => res.json())
+      .then((data) => { if (active) setLineStatus(data); })
+      .catch(() => { if (active) setLineStatusError("โหลดสถานะ LINE ไม่สำเร็จ"); });
+    return () => { active = false; };
+  }, []);
+
+  const webhookUrl = `${window.location.origin}/api/line-webhook`;
+
+  async function copyWebhookUrl() {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setWebhookCopied(true);
+      setTimeout(() => setWebhookCopied(false), 2000);
+    } catch {
+      setLineStatusError("คัดลอกไม่สำเร็จ กรุณาคัดลอกด้วยตนเอง");
+    }
+  }
+
+  async function authHeader(): Promise<Record<string, string>> {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async function handleTestSend() {
+    if (!testUserId.trim() || !testMessage.trim() || sendingTest) return;
+    setSendingTest(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/line-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ to: testUserId.trim(), text: testMessage.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "ส่งข้อความไม่สำเร็จ");
+      setTestResult({ ok: true, message: "ส่งข้อความสำเร็จ" });
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : "ส่งข้อความไม่สำเร็จ" });
+    } finally {
+      setSendingTest(false);
+    }
+  }
+
+  const loadLineUsers = useCallback(async () => {
+    setLoadingLineUsers(true);
+    setLineUsersError(null);
+    const { data, error } = await supabase
+      .from("line_users")
+      .select("line_user_id,display_name,picture_url,last_message_text,last_message_at,followed,is_admin,segment")
+      .order("last_message_at", { ascending: false, nullsFirst: false });
+    if (error) { setLineUsersError(error.message); setLoadingLineUsers(false); return; }
+    setLineUsers(data ?? []);
+    setLoadingLineUsers(false);
+  }, []);
+
+  useEffect(() => { void loadLineUsers(); }, [loadLineUsers]);
+
+  async function handleSyncFollowers() {
+    setSyncingFollowers(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/line-sync-followers", { method: "POST", headers: await authHeader() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "ซิงค์ผู้ติดตามไม่สำเร็จ");
+      setSyncResult({ ok: true, message: `ซิงค์แล้ว ${data.synced} คน` });
+      await loadLineUsers();
+    } catch (err) {
+      setSyncResult({ ok: false, message: err instanceof Error ? err.message : "ซิงค์ผู้ติดตามไม่สำเร็จ" });
+    } finally {
+      setSyncingFollowers(false);
+    }
+  }
+
+  async function copyLineUserId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedLineUserId(id);
+      setTimeout(() => setCopiedLineUserId((current) => (current === id ? null : current)), 2000);
+    } catch {
+      setLineUsersError("คัดลอกไม่สำเร็จ กรุณาคัดลอกด้วยตนเอง");
+    }
+  }
+
+  async function toggleLineAdmin(lineUser: LineUserRow) {
+    setLineUsersError(null);
+    const { error } = await supabase.from("line_users").update({ is_admin: !lineUser.is_admin }).eq("line_user_id", lineUser.line_user_id);
+    if (error) { setLineUsersError(error.message); return; }
+    await loadLineUsers();
+  }
+
+  async function setLineSegment(lineUser: LineUserRow, segment: LineSegment | "") {
+    setLineUsersError(null);
+    const { error } = await supabase.from("line_users").update({ segment: segment || null }).eq("line_user_id", lineUser.line_user_id);
+    if (error) { setLineUsersError(error.message); return; }
+    await loadLineUsers();
   }
 
   function handleConnectPos() {
@@ -252,15 +363,141 @@ export default function Settings() {
 
       <SectionCard>
         <div className="px-6 py-5" style={{ borderBottom: "1px solid var(--color-rule)" }}>
-          <p className="text-sm font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>LINE Official Account</p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>ยังไม่ได้เชื่อมต่อจริง — ค่าที่กรอกที่นี่จะถูกบันทึกไว้ในเบราว์เซอร์เท่านั้น</p>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>LINE Official Account</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>เชื่อมต่อผ่าน LINE Messaging API จริง — Channel Secret และ Access Token ตั้งค่าไว้บนเซิร์ฟเวอร์เท่านั้น</p>
+            </div>
+            {lineStatus && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0" style={{ backgroundColor: lineStatus.connected ? "#DCFCE7" : "#FEF3C7", color: lineStatus.connected ? "#166534" : "#92400E" }}>
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: lineStatus.connected ? "#166534" : "#92400E" }} />
+                {lineStatus.connected ? "เชื่อมต่อแล้ว" : "ยังไม่ได้ตั้งค่าบนเซิร์ฟเวอร์"}
+              </span>
+            )}
+          </div>
         </div>
         <div className="px-6 py-5 space-y-4">
-          <Field label="Channel Access Token" value={lineToken} onChange={setLineToken} placeholder="…" mono />
-          <button onClick={() => save("cdp.lineToken", lineToken, "line")} className="px-4 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: saved === "line" ? "#DCFCE7" : "var(--color-ink)", color: saved === "line" ? "#166534" : "#fff", border: "none", cursor: "pointer" }}>
-            {saved === "line" ? "บันทึกแล้ว" : "บันทึก"}
+          {lineStatusError && <p role="alert" className="text-xs" style={{ color: "#991B1B" }}>{lineStatusError}</p>}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium" style={{ color: "var(--color-ink-2)", display: "block" }}>Webhook URL</label>
+            <div className="flex items-center gap-2">
+              <input readOnly value={webhookUrl} onFocus={(event) => event.target.select()} className="flex-1 px-3.5 py-2.5 rounded-xl text-xs outline-none" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink)", fontFamily: "monospace" }} />
+              <button onClick={() => void copyWebhookUrl()} className="px-3.5 py-2.5 rounded-xl text-xs font-medium flex-shrink-0" style={{ backgroundColor: webhookCopied ? "#DCFCE7" : "var(--color-ink)", color: webhookCopied ? "#166534" : "#fff", border: "none", cursor: "pointer" }}>
+                {webhookCopied ? "คัดลอกแล้ว" : "คัดลอก"}
+              </button>
+            </div>
+            <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>นำ URL นี้ไปตั้งค่าใน LINE Developers Console → Messaging API → Webhook URL แล้วเปิดใช้งาน "Use webhook"</p>
+          </div>
+
+          {lineStatus?.basicId && (
+            <div className="rounded-xl px-4 py-3" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+              <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>LINE OA Basic ID</p>
+              <p className="text-sm font-mono mt-0.5" style={{ color: "var(--color-ink)" }}>{lineStatus.basicId}</p>
+              {lineStatus.addFriendUrl && <a href={lineStatus.addFriendUrl} target="_blank" rel="noreferrer" className="text-xs mt-1 inline-block" style={{ color: "#06C755" }}>ลิงก์เพิ่มเพื่อน →</a>}
+            </div>
+          )}
+
+          <div className="pt-4" style={{ borderTop: "1px solid var(--color-rule)" }}>
+            <p className="text-xs font-medium mb-3" style={{ color: "var(--color-ink-2)" }}>ทดสอบส่งข้อความ</p>
+            <div className="space-y-3">
+              <Field label="LINE User ID" value={testUserId} onChange={setTestUserId} placeholder="U4af4980629…" mono />
+              <Field label="ข้อความ" value={testMessage} onChange={setTestMessage} placeholder="สวัสดีค่ะ…" />
+              <button
+                onClick={() => void handleTestSend()}
+                disabled={!testUserId.trim() || !testMessage.trim() || sendingTest || !lineStatus?.connected}
+                className="px-4 py-2 rounded-xl text-sm font-medium"
+                style={{
+                  backgroundColor: lineStatus?.connected && testUserId.trim() && testMessage.trim() ? "var(--color-ink)" : "var(--color-ground)",
+                  color: lineStatus?.connected && testUserId.trim() && testMessage.trim() ? "#fff" : "var(--color-ink-3)",
+                  border: "none",
+                  cursor: lineStatus?.connected && !sendingTest ? "pointer" : "not-allowed",
+                }}
+              >
+                {sendingTest ? "กำลังส่ง…" : "ส่งข้อความทดสอบ"}
+              </button>
+              {testResult && <p role="alert" className="text-xs" style={{ color: testResult.ok ? "#166534" : "#991B1B" }}>{testResult.message}</p>}
+            </div>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard>
+        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: "1px solid var(--color-rule)" }}>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>สมาชิก LINE OA</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>{lineUsers.length} คน — บันทึกอัตโนมัติเมื่อมีคนทักข้อความหรือกดเพิ่มเพื่อน</p>
+          </div>
+          <button onClick={() => void handleSyncFollowers()} disabled={syncingFollowers || !lineStatus?.connected} className="px-4 py-2 rounded-xl text-sm font-medium flex-shrink-0" style={{ backgroundColor: lineStatus?.connected ? "var(--color-ink)" : "var(--color-ground)", color: lineStatus?.connected ? "#fff" : "var(--color-ink-3)", border: "none", cursor: lineStatus?.connected && !syncingFollowers ? "pointer" : "not-allowed" }}>
+            {syncingFollowers ? "กำลังซิงค์…" : "ซิงค์ผู้ติดตามทั้งหมด"}
           </button>
         </div>
+        {syncResult && <p role="alert" className="mx-5 mt-4 text-xs" style={{ color: syncResult.ok ? "#166534" : "#991B1B" }}>{syncResult.message}</p>}
+        {lineUsersError && <p role="alert" className="mx-5 mt-4 text-xs" style={{ color: "#991B1B" }}>{lineUsersError}</p>}
+        {loadingLineUsers ? (
+          <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>กำลังโหลดสมาชิก…</p>
+        ) : lineUsers.length === 0 ? (
+          <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีข้อมูล — ลองพิมพ์อะไรก็ได้ไปที่ LINE OA หรือกด "ซิงค์ผู้ติดตามทั้งหมด"</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr style={{ borderBottom: "1px solid var(--color-rule)" }}>
+                {["ผู้ใช้", "LINE User ID", "ข้อความล่าสุด", "Segment", "แอดมินบอท", ""].map((heading, index) => <th key={`${heading}-${index}`} className="px-5 py-3 text-xs font-medium text-left" style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}
+              </tr></thead>
+              <tbody>
+                {lineUsers.map((lineUser, index) => (
+                  <tr key={lineUser.line_user_id} style={{ borderBottom: index < lineUsers.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-2.5">
+                        {lineUser.picture_url ? (
+                          <img src={lineUser.picture_url} alt="" className="w-7 h-7 rounded-full flex-shrink-0" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink-3)" }}>{lineUser.display_name?.[0] ?? "?"}</div>
+                        )}
+                        <div>
+                          <p className="font-medium">{lineUser.display_name ?? "ไม่ทราบชื่อ"}</p>
+                          {!lineUser.followed && <p className="text-xs" style={{ color: "#92400E" }}>เลิกติดตามแล้ว</p>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-xs font-mono" style={{ color: "var(--color-ink-2)" }}>{lineUser.line_user_id}</td>
+                    <td className="px-5 py-3.5 text-xs max-w-[220px] truncate" style={{ color: "var(--color-ink-2)" }}>{lineUser.last_message_text ?? "—"}</td>
+                    <td className="px-5 py-3.5">
+                      {canEditCampaigns ? (
+                        <select
+                          aria-label={`Segment ของ ${lineUser.line_user_id}`}
+                          value={lineUser.segment ?? ""}
+                          onChange={(event) => void setLineSegment(lineUser, event.target.value as LineSegment | "")}
+                          className="rounded-full pl-3 pr-6 py-1.5 text-xs font-medium outline-none"
+                          style={{ backgroundColor: lineUser.segment ? "#E0E7FF" : "var(--color-ground)", color: lineUser.segment ? "#3730A3" : "var(--color-ink-3)", border: "1px solid var(--color-rule)", cursor: "pointer" }}
+                        >
+                          <option value="">ไม่ระบุ</option>
+                          {LINE_SEGMENTS.map((seg) => <option key={seg} value={seg}>{seg}</option>)}
+                        </select>
+                      ) : (
+                        <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>{lineUser.segment ?? "ไม่ระบุ"}</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {canEditCampaigns ? (
+                        <button onClick={() => void toggleLineAdmin(lineUser)} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ backgroundColor: lineUser.is_admin ? "#1A1917" : "var(--color-ground)", color: lineUser.is_admin ? "#fff" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
+                          {lineUser.is_admin ? "แอดมิน ✓" : "ตั้งเป็นแอดมิน"}
+                        </button>
+                      ) : (
+                        lineUser.is_admin && <span className="text-xs font-medium" style={{ color: "var(--color-ink)" }}>แอดมิน</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <button onClick={() => void copyLineUserId(lineUser.line_user_id)} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ backgroundColor: copiedLineUserId === lineUser.line_user_id ? "#DCFCE7" : "var(--color-ground)", color: copiedLineUserId === lineUser.line_user_id ? "#166534" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
+                        {copiedLineUserId === lineUser.line_user_id ? "คัดลอกแล้ว" : "คัดลอก ID"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </SectionCard>
 
       {canManageMembers ? <SectionCard>

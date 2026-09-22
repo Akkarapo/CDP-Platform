@@ -86,7 +86,7 @@ ${input.topProducts.length ? `- สินค้าขายดีจริงข
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-flash-lite-latest",
         contents: userPrompt,
         config: {
           systemInstruction: SYSTEM_PROMPT,

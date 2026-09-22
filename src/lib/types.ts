@@ -71,6 +71,7 @@ export interface CampaignRecord {
   churnFilterLabel?: string;
   rfmFilterLabel?: string;
   prompt?: string;
+  imageUrl?: string;
 }
 
 export interface ImportLogEntry {

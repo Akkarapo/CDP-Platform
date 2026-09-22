@@ -115,8 +115,9 @@ interface DataContextValue {
   rawTransactions: RawTransaction[];
   productStats: ReturnType<typeof buildProductStats>;
   campaigns: CampaignRecord[];
-  addCampaign: (c: Omit<CampaignRecord, "id" | "createdAt">) => Promise<void>;
+  addCampaign: (c: Omit<CampaignRecord, "createdAt">) => Promise<void>;
   updateCampaignStatus: (id: string, status: CampaignRecord["status"]) => Promise<void>;
+  sendCampaign: (id: string) => Promise<number>;
   importLog: ImportLogEntry[];
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
   removeImport: (id: string) => void;
@@ -166,7 +167,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     supabase
       .from("campaigns")
-      .select("id,name,target_segment,status,message,created_at")
+      .select("id,name,target_segment,status,message,created_at,image_url")
       .order("created_at", { ascending: false })
       .then(({ data, error: campaignError }) => {
         if (!active) return;
@@ -181,6 +182,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           status: row.status as CampaignRecord["status"],
           message: row.message,
           createdAt: row.created_at,
+          imageUrl: row.image_url ?? undefined,
         })));
       });
 
@@ -260,20 +262,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  async function addCampaign(c: Omit<CampaignRecord, "id" | "createdAt">) {
+  async function addCampaign(c: Omit<CampaignRecord, "createdAt">) {
     const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user) throw authError ?? new Error("กรุณาเข้าสู่ระบบอีกครั้ง");
 
     const { data, error: campaignError } = await supabase
       .from("campaigns")
       .insert({
+        id: c.id,
         name: c.name,
         target_segment: c.targetSegment,
         status: c.status,
         message: c.message,
+        image_url: c.imageUrl ?? null,
         created_by: authData.user.id,
       })
-      .select("id,name,target_segment,status,message,created_at")
+      .select("id,name,target_segment,status,message,created_at,image_url")
       .single();
 
     if (campaignError) throw campaignError;
@@ -284,6 +288,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       status: data.status as CampaignRecord["status"],
       message: data.message,
       createdAt: data.created_at,
+      imageUrl: data.image_url ?? undefined,
     }, ...prev]);
   }
   async function updateCampaignStatus(id: string, status: CampaignRecord["status"]) {
@@ -294,6 +299,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (campaignError) throw campaignError;
     setCampaigns((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
+  }
+  async function sendCampaign(id: string): Promise<number> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error("กรุณาเข้าสู่ระบบอีกครั้ง");
+
+    const res = await fetch("/api/campaign-send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ campaignId: id }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "ส่งแคมเปญไม่สำเร็จ");
+    setCampaigns((prev) => prev.map((c) => (c.id === id ? { ...c, status: "sent" } : c)));
+    return data.recipientCount as number;
   }
 
   function importCsvFile(fileName: string, text: string) {
@@ -515,6 +535,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     campaigns,
     addCampaign,
     updateCampaignStatus,
+    sendCampaign,
     importLog,
     importCsvFile,
     removeImport,
