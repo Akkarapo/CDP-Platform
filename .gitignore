@@ -5,6 +5,7 @@ build/
 .env*
 !.env.example
 .vite/
+.idea/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*
