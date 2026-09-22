@@ -30,12 +30,10 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
     if (!valid || saving) return;
     setSaving(true);
     setError(null);
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-    if (authError || !authData.user) {
-      setError("กรุณาเข้าสู่ระบบอีกครั้ง"); setSaving(false); return;
-    }
-    const { error: inviteError } = await supabase.from("workspace_invitations").insert({
-      email: email.trim().toLowerCase(), display_name: name.trim() || null, role, invited_by: authData.user.id,
+    const { error: inviteError } = await supabase.rpc("invite_workspace_member", {
+      p_email: email.trim(),
+      p_display_name: name.trim(),
+      p_role: role,
     });
     if (inviteError) {
       setError(inviteError.code === "23505" ? "อีเมลนี้ถูกเพิ่มไว้แล้ว" : inviteError.message); setSaving(false); return;
