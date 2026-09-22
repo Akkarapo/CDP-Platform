@@ -16,7 +16,7 @@ export interface AuthUser {
   expiresAt: number;
 }
 
-export type WorkspaceRole = "admin" | "editor" | "viewer";
+export type WorkspaceRole = "super_admin" | "admin" | "editor" | "viewer";
 
 interface GoogleIdTokenPayload {
   aud?: string;
@@ -37,6 +37,7 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as
 interface AuthContextValue {
   user: AuthUser | null;
   role: WorkspaceRole | null;
+  isSuperAdmin: boolean;
   canManageMembers: boolean;
   canEditCampaigns: boolean;
   // `ready`: the Supabase session restore has finished (resolves fast).
@@ -365,8 +366,9 @@ export function AuthProvider({
       value={{
         user,
         role,
-        canManageMembers: role === "admin",
-        canEditCampaigns: role === "admin" || role === "editor",
+        isSuperAdmin: role === "super_admin",
+        canManageMembers: role === "admin" || role === "super_admin",
+        canEditCampaigns: role === "admin" || role === "super_admin" || role === "editor",
         ready,
         googleReady,
         error,

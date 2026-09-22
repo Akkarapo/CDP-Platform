@@ -63,7 +63,10 @@ export interface CampaignRecord {
   id: string;
   name: string;
   targetSegment: Segment | "ทุก Segment";
-  status: "pending" | "approved" | "sent";
+  status: "pending" | "rejected" | "approved" | "cancelled" | "sent";
+  // Orthogonal to status — a campaign can be paused both before and after
+  // the real LINE send, halting tracking-code redemption either way.
+  paused: boolean;
   message: string;
   createdAt: string;
   // Optional finer-grained targeting, added alongside targetSegment — absent

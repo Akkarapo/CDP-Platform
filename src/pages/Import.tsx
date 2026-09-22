@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { useData } from "../lib/store";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { useData, MOCK_POS_TX_PREFIX, MOCK_POS_CUSTOMER_PREFIX } from "../lib/store";
 
 function StatusBadge({ status }: { status: "success" | "error" }) {
   const m = status === "success" ? { label: "สำเร็จ", bg: "#DCFCE7", color: "#166534" } : { label: "ผิดพลาด", bg: "#FEE2E2", color: "#991B1B" };
@@ -118,8 +118,27 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function Import() {
-  const { importLog, rawTransactions, customers, removeImport, clearAllImports } = useData();
+  const { importLog, rawTransactions, customers, removeImport, clearAllImports, posConnected, rawCustomers } = useData();
   const [modalOpen, setModalOpen] = useState(false);
+  const [lineStatus, setLineStatus] = useState<{ connected: boolean } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/line-status")
+      .then((res) => res.json())
+      .then((data) => { if (active) setLineStatus(data); })
+      .catch(() => { if (active) setLineStatus({ connected: false }); });
+    return () => { active = false; };
+  }, []);
+
+  const mockTransactionCount = useMemo(
+    () => rawTransactions.filter((t) => t.transaction_id.startsWith(MOCK_POS_TX_PREFIX)).length,
+    [rawTransactions]
+  );
+  const mockCustomerCount = useMemo(
+    () => rawCustomers.filter((c) => c.customer_id.startsWith(MOCK_POS_CUSTOMER_PREFIX)).length,
+    [rawCustomers]
+  );
 
   function handleRemove(id: string) {
     if (window.confirm("ยกเลิกการนำเข้ารายการนี้และลบข้อมูลที่นำเข้ามาทั้งหมด?")) removeImport(id);
@@ -136,7 +155,7 @@ export default function Import() {
         <p className="text-sm mt-0.5" style={{ color: "var(--color-ink-3)" }}>นำเข้าข้อมูลลูกค้า/ธุรกรรมเพิ่มเติมจากไฟล์ CSV</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
           <div className="flex items-start justify-between">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
@@ -153,12 +172,44 @@ export default function Import() {
         </div>
 
         <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="11" rx="2" stroke="var(--color-ink)" strokeWidth="1.5" /><path d="M6 9h2M10 9h2M6 12h2M10 12h2M14 9h.5M14 12h.5" stroke="var(--color-ink-3)" strokeWidth="1.5" strokeLinecap="round" /></svg>
+          <div className="flex items-start justify-between">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="11" rx="2" stroke="var(--color-ink)" strokeWidth="1.5" /><path d="M6 9h2M10 9h2M6 12h2M10 12h2M14 9h.5M14 12h.5" stroke="var(--color-ink-3)" strokeWidth="1.5" strokeLinecap="round" /></svg>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0" style={{ backgroundColor: posConnected ? "#DCFCE7" : "#F3F4F6", color: posConnected ? "#166534" : "#6B7280" }}>
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: posConnected ? "#166534" : "#6B7280" }} />
+              {posConnected ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
+            </span>
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>POS API / LINE OA</p>
-            <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>ยังไม่ได้เชื่อมต่อ — ต้องใช้ backend และ credential จริงจึงจะดึงข้อมูลอัตโนมัติได้ ตั้งค่าได้ที่หน้า Settings</p>
+            <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>POS API</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>
+              {posConnected
+                ? `ระบบจำลอง — จำลองรายการซื้อมาแล้ว ${mockTransactionCount.toLocaleString("th-TH")} รายการ, ลูกค้าใหม่ ${mockCustomerCount.toLocaleString("th-TH")} คน`
+                : "ยังไม่ได้เชื่อมต่อ — ตั้งค่าได้ที่หน้า Settings"}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+          <div className="flex items-start justify-between">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2C5.582 2 2 5.134 2 9c0 2.16 1.08 4.094 2.8 5.44-.11.48-.44 1.74-.5 2.02-.07.33.12.33.25.24.1-.07 1.62-1.07 2.28-1.51.36.05.73.08 1.17.08 4.418 0 8-3.134 8-7s-3.582-7-8-7z" stroke="var(--color-ink)" strokeWidth="1.5" /></svg>
+            </div>
+            {lineStatus && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0" style={{ backgroundColor: lineStatus.connected ? "#DCFCE7" : "#F3F4F6", color: lineStatus.connected ? "#166534" : "#6B7280" }}>
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: lineStatus.connected ? "#166534" : "#6B7280" }} />
+                {lineStatus.connected ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
+              </span>
+            )}
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>LINE Official Account</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>
+              {lineStatus?.connected
+                ? "เชื่อมต่อผ่าน LINE Messaging API จริง — ดูรายชื่อสมาชิกได้ที่หน้า Settings"
+                : "ยังไม่ได้เชื่อมต่อ — ตั้งค่าได้ที่หน้า Settings"}
+            </p>
           </div>
         </div>
       </div>

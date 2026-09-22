@@ -9,10 +9,14 @@ type LineUserRow = { line_user_id: string; display_name: string | null; picture_
 const LINE_SEGMENTS: LineSegment[] = ["Premium", "Regular", "New", "Dormant"];
 
 const ROLE_META: Record<WorkspaceRole, { label: string; bg: string; color: string }> = {
+  super_admin: { label: "Super Admin", bg: "#7C2D12", color: "#ffffff" },
   admin: { label: "Admin", bg: "#1A1917", color: "#ffffff" },
   editor: { label: "Editor", bg: "#E0E7FF", color: "#3730A3" },
   viewer: { label: "Viewer", bg: "#F3F4F6", color: "#6B7280" },
 };
+// super_admin is never picked from a dropdown or invite — it only moves
+// via the explicit transfer action, which demotes the sender atomically.
+const ASSIGNABLE_ROLES: WorkspaceRole[] = ["admin", "editor", "viewer"];
 
 function SectionCard({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)" }}>{children}</div>;
@@ -54,7 +58,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         <Field label="ชื่อ-นามสกุล (ไม่บังคับ)" value={name} onChange={setName} placeholder="สมชาย ใจดี" />
         <Field label="อีเมล" value={email} onChange={setEmail} placeholder="somchai@company.co.th" />
         <div className="space-y-1.5"><label className="text-xs font-medium" style={{ color: "var(--color-ink-2)", display: "block" }}>Role</label><div className="flex gap-2">
-          {(Object.keys(ROLE_META) as WorkspaceRole[]).map((item) => { const active = role === item; const meta = ROLE_META[item]; return <button key={item} onClick={() => setRole(item)} className="flex-1 py-2 rounded-xl text-xs font-medium" style={{ backgroundColor: active ? meta.bg : "var(--color-ground)", color: active ? meta.color : "var(--color-ink-2)", border: `1.5px solid ${active ? meta.bg : "var(--color-rule)"}`, cursor: "pointer" }}>{meta.label}</button>; })}
+          {ASSIGNABLE_ROLES.map((item) => { const active = role === item; const meta = ROLE_META[item]; return <button key={item} onClick={() => setRole(item)} className="flex-1 py-2 rounded-xl text-xs font-medium" style={{ backgroundColor: active ? meta.bg : "var(--color-ground)", color: active ? meta.color : "var(--color-ink-2)", border: `1.5px solid ${active ? meta.bg : "var(--color-rule)"}`, cursor: "pointer" }}>{meta.label}</button>; })}
         </div></div>
         {error && <p role="alert" className="text-xs" style={{ color: "#991B1B" }}>{error}</p>}
       </div>
@@ -64,7 +68,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
 }
 
 export default function Settings() {
-  const { user, role, canManageMembers, canEditCampaigns } = useAuth();
+  const { user, role, isSuperAdmin, canManageMembers, canEditCampaigns } = useAuth();
   const { customers, rawCustomers, rawTransactions, posConnected, connectPos, resetPos } = useData();
 
   const [posKey, setPosKey] = useState(() => localStorage.getItem("cdp.posKey") ?? "");
@@ -85,6 +89,7 @@ export default function Settings() {
   const [syncingFollowers, setSyncingFollowers] = useState(false);
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [copiedLineUserId, setCopiedLineUserId] = useState<string | null>(null);
+  const [lineUserSearch, setLineUserSearch] = useState("");
 
   const [team, setTeam] = useState<TeamEntry[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(false);
@@ -123,6 +128,14 @@ export default function Settings() {
     const table = entry.status === "active" ? "workspace_members" : "workspace_invitations";
     const key = entry.status === "active" ? "user_id" : "id";
     const { error } = await supabase.from(table).delete().eq(key, entry.id);
+    if (error) { setTeamError(error.message); return; }
+    await loadTeam();
+  }
+
+  async function transferSuperAdmin(entry: TeamEntry) {
+    if (!window.confirm(`โอนสิทธิ์ Super Admin ให้ ${entry.name}? คุณจะเหลือสิทธิ์ Admin แทน`)) return;
+    setTeamError(null);
+    const { error } = await supabase.rpc("transfer_super_admin", { p_target_user_id: entry.id });
     if (error) { setTeamError(error.message); return; }
     await loadTeam();
   }
@@ -207,6 +220,17 @@ export default function Settings() {
   }, []);
 
   useEffect(() => { void loadLineUsers(); }, [loadLineUsers]);
+
+  const filteredLineUsers = useMemo(() => {
+    const q = lineUserSearch.trim().toLowerCase();
+    if (!q) return lineUsers;
+    return lineUsers.filter((u) =>
+      (u.display_name ?? "").toLowerCase().includes(q) ||
+      u.line_user_id.toLowerCase().includes(q) ||
+      (u.segment ?? "").toLowerCase().includes(q) ||
+      (u.last_message_text ?? "").toLowerCase().includes(q)
+    );
+  }, [lineUsers, lineUserSearch]);
 
   async function handleSyncFollowers() {
     setSyncingFollowers(true);
@@ -439,64 +463,76 @@ export default function Settings() {
         ) : lineUsers.length === 0 ? (
           <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีข้อมูล — ลองพิมพ์อะไรก็ได้ไปที่ LINE OA หรือกด "ซิงค์ผู้ติดตามทั้งหมด"</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr style={{ borderBottom: "1px solid var(--color-rule)" }}>
-                {["ผู้ใช้", "LINE User ID", "ข้อความล่าสุด", "Segment", "แอดมินบอท", ""].map((heading, index) => <th key={`${heading}-${index}`} className="px-5 py-3 text-xs font-medium text-left" style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}
-              </tr></thead>
-              <tbody>
-                {lineUsers.map((lineUser, index) => (
-                  <tr key={lineUser.line_user_id} style={{ borderBottom: index < lineUsers.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2.5">
-                        {lineUser.picture_url ? (
-                          <img src={lineUser.picture_url} alt="" className="w-7 h-7 rounded-full flex-shrink-0" referrerPolicy="no-referrer" />
-                        ) : (
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink-3)" }}>{lineUser.display_name?.[0] ?? "?"}</div>
-                        )}
-                        <div>
-                          <p className="font-medium">{lineUser.display_name ?? "ไม่ทราบชื่อ"}</p>
-                          {!lineUser.followed && <p className="text-xs" style={{ color: "#92400E" }}>เลิกติดตามแล้ว</p>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-xs font-mono" style={{ color: "var(--color-ink-2)" }}>{lineUser.line_user_id}</td>
-                    <td className="px-5 py-3.5 text-xs max-w-[220px] truncate" style={{ color: "var(--color-ink-2)" }}>{lineUser.last_message_text ?? "—"}</td>
-                    <td className="px-5 py-3.5">
-                      {canEditCampaigns ? (
-                        <select
-                          aria-label={`Segment ของ ${lineUser.line_user_id}`}
-                          value={lineUser.segment ?? ""}
-                          onChange={(event) => void setLineSegment(lineUser, event.target.value as LineSegment | "")}
-                          className="rounded-full pl-3 pr-6 py-1.5 text-xs font-medium outline-none"
-                          style={{ backgroundColor: lineUser.segment ? "#E0E7FF" : "var(--color-ground)", color: lineUser.segment ? "#3730A3" : "var(--color-ink-3)", border: "1px solid var(--color-rule)", cursor: "pointer" }}
-                        >
-                          <option value="">ไม่ระบุ</option>
-                          {LINE_SEGMENTS.map((seg) => <option key={seg} value={seg}>{seg}</option>)}
-                        </select>
-                      ) : (
-                        <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>{lineUser.segment ?? "ไม่ระบุ"}</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {canEditCampaigns ? (
-                        <button onClick={() => void toggleLineAdmin(lineUser)} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ backgroundColor: lineUser.is_admin ? "#1A1917" : "var(--color-ground)", color: lineUser.is_admin ? "#fff" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
-                          {lineUser.is_admin ? "แอดมิน ✓" : "ตั้งเป็นแอดมิน"}
-                        </button>
-                      ) : (
-                        lineUser.is_admin && <span className="text-xs font-medium" style={{ color: "var(--color-ink)" }}>แอดมิน</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <button onClick={() => void copyLineUserId(lineUser.line_user_id)} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ backgroundColor: copiedLineUserId === lineUser.line_user_id ? "#DCFCE7" : "var(--color-ground)", color: copiedLineUserId === lineUser.line_user_id ? "#166534" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
-                        {copiedLineUserId === lineUser.line_user_id ? "คัดลอกแล้ว" : "คัดลอก ID"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="px-5 pt-4">
+              <input
+                value={lineUserSearch}
+                onChange={(event) => setLineUserSearch(event.target.value)}
+                placeholder="ค้นหาด้วยชื่อ, LINE User ID, Segment หรือข้อความล่าสุด"
+                className="w-full px-3.5 py-2 rounded-xl text-sm outline-none"
+                style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink)" }}
+              />
+            </div>
+            {filteredLineUsers.length === 0 ? (
+              <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>ไม่พบสมาชิกที่ตรงกับคำค้นหา</p>
+            ) : (
+              <div className="mt-3 overflow-y-auto" style={{ maxHeight: 340 }}>
+                <table className="w-full text-sm">
+                  <thead><tr style={{ borderBottom: "1px solid var(--color-rule)" }}>
+                    {["ผู้ใช้", "ข้อความล่าสุด", "Segment", "แอดมินบอท"].map((heading, index) => <th key={`${heading}-${index}`} className="px-5 py-3 text-xs font-medium text-left" style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {filteredLineUsers.map((lineUser, index) => (
+                      <tr key={lineUser.line_user_id} style={{ borderBottom: index < filteredLineUsers.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-2.5">
+                            {lineUser.picture_url ? (
+                              <img src={lineUser.picture_url} alt="" className="w-7 h-7 rounded-full flex-shrink-0" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink-3)" }}>{lineUser.display_name?.[0] ?? "?"}</div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">{lineUser.display_name ?? "ไม่ทราบชื่อ"}</p>
+                              <button onClick={() => void copyLineUserId(lineUser.line_user_id)} className="text-xs font-mono truncate block" style={{ color: copiedLineUserId === lineUser.line_user_id ? "#166534" : "var(--color-ink-3)", background: "none", border: "none", padding: 0, cursor: "pointer", maxWidth: 180 }} title="คัดลอก LINE User ID">
+                                {copiedLineUserId === lineUser.line_user_id ? "คัดลอกแล้ว" : lineUser.line_user_id}
+                              </button>
+                              {!lineUser.followed && <p className="text-xs" style={{ color: "#92400E" }}>เลิกติดตามแล้ว</p>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 text-xs max-w-[160px] truncate" style={{ color: "var(--color-ink-2)" }}>{lineUser.last_message_text ?? "—"}</td>
+                        <td className="px-5 py-3.5">
+                          {canEditCampaigns ? (
+                            <select
+                              aria-label={`Segment ของ ${lineUser.line_user_id}`}
+                              value={lineUser.segment ?? ""}
+                              onChange={(event) => void setLineSegment(lineUser, event.target.value as LineSegment | "")}
+                              className="rounded-full pl-3 pr-6 py-1.5 text-xs font-medium outline-none"
+                              style={{ backgroundColor: lineUser.segment ? "#E0E7FF" : "var(--color-ground)", color: lineUser.segment ? "#3730A3" : "var(--color-ink-3)", border: "1px solid var(--color-rule)", cursor: "pointer" }}
+                            >
+                              <option value="">ไม่ระบุ</option>
+                              {LINE_SEGMENTS.map((seg) => <option key={seg} value={seg}>{seg}</option>)}
+                            </select>
+                          ) : (
+                            <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>{lineUser.segment ?? "ไม่ระบุ"}</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {canEditCampaigns ? (
+                            <button onClick={() => void toggleLineAdmin(lineUser)} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ backgroundColor: lineUser.is_admin ? "#1A1917" : "var(--color-ground)", color: lineUser.is_admin ? "#fff" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
+                              {lineUser.is_admin ? "แอดมิน ✓" : "ตั้งเป็นแอดมิน"}
+                            </button>
+                          ) : (
+                            lineUser.is_admin && <span className="text-xs font-medium" style={{ color: "var(--color-ink)" }}>แอดมิน</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </SectionCard>
 
@@ -507,7 +543,11 @@ export default function Settings() {
           {["สมาชิก", "สถานะ", "Role", ""].map((heading, index) => <th key={`${heading}-${index}`} className={`px-5 py-3 text-xs font-medium ${index === 3 ? "text-right" : "text-left"}`} style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}
         </tr></thead><tbody>
           {team.map((member, index) => {
-            const canRemove = !member.isYou && member.role !== "admin";
+            const isAdminTier = member.role === "admin" || member.role === "super_admin";
+            const dropdownDisabled = member.isYou || (isAdminTier && !isSuperAdmin);
+            const dropdownOptions = isSuperAdmin ? ASSIGNABLE_ROLES : (["editor", "viewer"] as WorkspaceRole[]);
+            const canRemove = !member.isYou && member.role !== "super_admin" && (member.role !== "admin" || isSuperAdmin);
+            const canTransfer = isSuperAdmin && member.status === "active" && !member.isYou && member.role !== "super_admin";
             return <tr key={`${member.status}-${member.id}`} style={{ borderBottom: index < team.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
               <td className="px-5 py-3.5"><p className="font-medium">{member.name}{member.isYou && <span className="ml-2 text-xs" style={{ color: "var(--color-ink-3)" }}>(คุณ)</span>}</p><p className="text-xs" style={{ color: "var(--color-ink-3)" }}>{member.email}</p></td>
               <td className="px-5 py-3.5"><span className="text-xs" style={{ color: member.status === "active" ? "#166534" : "#92400E" }}>{member.status === "active" ? "ใช้งานแล้ว" : "รอล็อกอินครั้งแรก"}</span></td>
@@ -517,11 +557,12 @@ export default function Settings() {
                     aria-label={`Role ของ ${member.email}`}
                     value={member.role}
                     onChange={(event) => void changeRole(member, event.target.value as WorkspaceRole)}
-                    disabled={member.isYou}
+                    disabled={dropdownDisabled}
                     className="appearance-none rounded-full pl-3.5 pr-8 py-1.5 text-xs font-medium outline-none"
-                    style={{ backgroundColor: ROLE_META[member.role].bg, color: ROLE_META[member.role].color, border: "none", cursor: member.isYou ? "not-allowed" : "pointer" }}
+                    style={{ backgroundColor: ROLE_META[member.role].bg, color: ROLE_META[member.role].color, border: "none", cursor: dropdownDisabled ? "not-allowed" : "pointer" }}
                   >
-                    {(Object.keys(ROLE_META) as WorkspaceRole[]).map((item) => <option key={item} value={item}>{ROLE_META[item].label}</option>)}
+                    {member.role === "super_admin" && <option value="super_admin">{ROLE_META.super_admin.label}</option>}
+                    {dropdownOptions.map((item) => <option key={item} value={item}>{ROLE_META[item].label}</option>)}
                   </select>
                   <svg className="pointer-events-none absolute" style={{ right: "10px", top: "50%", transform: "translateY(-50%)" }} width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 3.5L5 6.5L8 3.5" stroke={ROLE_META[member.role].color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -529,7 +570,10 @@ export default function Settings() {
                 </div>
               </td>
               <td className="px-5 py-3.5 text-right">
-                {canRemove && <button onClick={() => void removeMember(member)} aria-label={`ลบ ${member.name}`} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ color: "#991B1B", backgroundColor: "transparent", border: "1px solid var(--color-rule)", cursor: "pointer" }}>ลบ</button>}
+                <div className="flex items-center justify-end gap-2">
+                  {canTransfer && <button onClick={() => void transferSuperAdmin(member)} aria-label={`โอนสิทธิ์ Super Admin ให้ ${member.name}`} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ color: "#7C2D12", backgroundColor: "transparent", border: "1px solid var(--color-rule)", cursor: "pointer" }}>โอน Super Admin</button>}
+                  {canRemove && <button onClick={() => void removeMember(member)} aria-label={`ลบ ${member.name}`} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ color: "#991B1B", backgroundColor: "transparent", border: "1px solid var(--color-rule)", cursor: "pointer" }}>ลบ</button>}
+                </div>
               </td>
             </tr>;
           })}

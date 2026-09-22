@@ -68,7 +68,7 @@ function apiDevMiddleware(geminiApiKey: string | undefined, lineEnv: LineDevEnv)
           }
           const body = rawBody.length ? JSON.parse(rawBody.toString('utf-8')) : { events: [] }
           const { recordLineEvent, isLineAdmin } = await server.ssrLoadModule('/api/_lib/lineUsers.ts')
-          const { confirmClick, getReportStats } = await server.ssrLoadModule('/api/_lib/tracking.ts')
+          const { confirmClick, getCampaignReport, formatCampaignReport } = await server.ssrLoadModule('/api/_lib/tracking.ts')
           const TRACKING_CODE_PATTERN = /^[A-Z0-9]{6}$/
           await Promise.all(
             (body.events ?? []).map(async (event: { type: string; replyToken?: string; source?: { userId?: string }; message?: { type: string; text?: string } }) => {
@@ -78,16 +78,27 @@ function apiDevMiddleware(geminiApiKey: string | undefined, lineEnv: LineDevEnv)
                   const text = (event.message.text ?? '').trim()
                   const userId = event.source?.userId
                   if (TRACKING_CODE_PATTERN.test(text.toUpperCase())) {
-                    const confirmed = userId ? await confirmClick(text.toUpperCase(), userId) : false
-                    await replyMessage(event.replyToken, [{ type: 'text', text: confirmed ? 'ยืนยันการคลิกสำเร็จ ขอบคุณค่ะ 🎉' : 'ไม่พบรหัสนี้ หรือถูกใช้ไปแล้ว' }], accessToken)
+                    const result = userId
+                      ? await confirmClick(text.toUpperCase(), userId)
+                      : { ok: false, reason: 'not_found', campaignId: null, campaignName: null, confirmedCount: 0 }
+                    let replyText
+                    if (result.ok) {
+                      replyText = 'ยืนยันการใช้โค้ดสำเร็จ ขอบคุณค่ะ 🎉'
+                    } else if (result.reason === 'paused') {
+                      replyText = `แคมเปญ "${result.campaignName}" หยุดรับการยืนยันชั่วคราวอยู่ กรุณาลองใหม่ภายหลัง`
+                    } else if (result.reason === 'cancelled') {
+                      replyText = `แคมเปญ "${result.campaignName}" ถูกยกเลิกแล้ว ไม่สามารถใช้โค้ดนี้ได้อีก`
+                    } else {
+                      replyText = 'ไม่พบรหัสนี้ หรือถูกใช้ไปแล้ว'
+                    }
+                    await replyMessage(event.replyToken, [{ type: 'text', text: replyText }], accessToken)
                   } else if (text === '/report') {
                     const allowed = userId ? await isLineAdmin(userId) : false
                     if (!allowed) {
                       await replyMessage(event.replyToken, [{ type: 'text', text: 'คำสั่งนี้สำหรับแอดมินเท่านั้น' }], accessToken)
                     } else {
-                      const stats = await getReportStats()
-                      const summary = `รายงานผลแคมเปญ\nคลิกทั้งหมด: ${stats.totalClicks}\nยืนยันตัวตนแล้ว: ${stats.confirmedClicks}\nอัตรายืนยัน (CTR): ${(stats.confirmationRate * 100).toFixed(1)}%`
-                      await replyMessage(event.replyToken, [{ type: 'text', text: summary }], accessToken)
+                      const rows = await getCampaignReport(5)
+                      await replyMessage(event.replyToken, [{ type: 'text', text: formatCampaignReport(rows) }], accessToken)
                     }
                   } else {
                     await replyMessage(event.replyToken, [{ type: 'text', text: 'ขอบคุณที่ติดต่อเรา ทีมงานได้รับข้อความแล้ว' }], accessToken)

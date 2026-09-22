@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { recordClick } from "./_lib/tracking.js";
+import { recordClick, checkCampaignGate } from "./_lib/tracking.js";
 import { oaMessageUrl } from "./_lib/lineClient.js";
 
 function escapeHtml(value: string): string {
@@ -14,8 +14,18 @@ function page(body: string): string {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const campaignId = typeof req.query.c === "string" ? req.query.c : null;
-  const code = await recordClick(campaignId);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+
+  const gate = await checkCampaignGate(campaignId);
+  if (!gate.allowed) {
+    const message = gate.reason === "cancelled"
+      ? `แคมเปญ "${gate.name}" ถูกยกเลิกแล้ว ลิงก์นี้ใช้งานไม่ได้อีกต่อไป`
+      : `แคมเปญ "${gate.name}" หยุดรับการยืนยันชั่วคราวอยู่ กรุณาลองใหม่ภายหลัง`;
+    res.status(410).send(page(`<p>${escapeHtml(message)}</p>`));
+    return;
+  }
+
+  const code = await recordClick(campaignId);
 
   if (!code) {
     res.status(500).send(page(`<p>เกิดข้อผิดพลาด ลองใหม่อีกครั้ง</p>`));

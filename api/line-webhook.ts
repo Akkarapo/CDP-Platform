@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { verifyLineSignature, replyMessage, type LineWebhookBody } from "./_lib/lineClient.js";
 import { recordLineEvent, isLineAdmin } from "./_lib/lineUsers.js";
-import { confirmClick, getReportStats } from "./_lib/tracking.js";
+import { confirmClick, getCampaignReport, formatCampaignReport } from "./_lib/tracking.js";
 
 const TRACKING_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 
@@ -44,16 +44,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const userId = event.source?.userId;
 
           if (TRACKING_CODE_PATTERN.test(text.toUpperCase())) {
-            const confirmed = userId ? await confirmClick(text.toUpperCase(), userId) : false;
-            await replyMessage(event.replyToken, [{ type: "text", text: confirmed ? "ยืนยันการคลิกสำเร็จ ขอบคุณค่ะ 🎉" : "ไม่พบรหัสนี้ หรือถูกใช้ไปแล้ว" }], accessToken);
+            const result = userId
+              ? await confirmClick(text.toUpperCase(), userId)
+              : { ok: false as const, reason: "not_found" as const, campaignId: null, campaignName: null, confirmedCount: 0 };
+            let replyText: string;
+            if (result.ok) {
+              replyText = "ยืนยันการใช้โค้ดสำเร็จ ขอบคุณค่ะ 🎉";
+            } else if (result.reason === "paused") {
+              replyText = `แคมเปญ "${result.campaignName}" หยุดรับการยืนยันชั่วคราวอยู่ กรุณาลองใหม่ภายหลัง`;
+            } else if (result.reason === "cancelled") {
+              replyText = `แคมเปญ "${result.campaignName}" ถูกยกเลิกแล้ว ไม่สามารถใช้โค้ดนี้ได้อีก`;
+            } else {
+              replyText = "ไม่พบรหัสนี้ หรือถูกใช้ไปแล้ว";
+            }
+            await replyMessage(event.replyToken, [{ type: "text", text: replyText }], accessToken);
           } else if (text === "/report") {
             const allowed = userId ? await isLineAdmin(userId) : false;
             if (!allowed) {
               await replyMessage(event.replyToken, [{ type: "text", text: "คำสั่งนี้สำหรับแอดมินเท่านั้น" }], accessToken);
             } else {
-              const stats = await getReportStats();
-              const summary = `รายงานผลแคมเปญ\nคลิกทั้งหมด: ${stats.totalClicks}\nยืนยันตัวตนแล้ว: ${stats.confirmedClicks}\nอัตรายืนยัน (CTR): ${(stats.confirmationRate * 100).toFixed(1)}%`;
-              await replyMessage(event.replyToken, [{ type: "text", text: summary }], accessToken);
+              const rows = await getCampaignReport(5);
+              await replyMessage(event.replyToken, [{ type: "text", text: formatCampaignReport(rows) }], accessToken);
             }
           } else {
             await replyMessage(event.replyToken, [{ type: "text", text: "ขอบคุณที่ติดต่อเรา ทีมงานได้รับข้อความแล้ว" }], accessToken);

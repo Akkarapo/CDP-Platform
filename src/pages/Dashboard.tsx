@@ -14,9 +14,12 @@ const TIER_COLOR: Record<"good" | "watch" | "risk", { bg: string; color: string 
 
 const STATUS: Record<string, { label: string; bg: string; color: string }> = {
   pending: { label: "รออนุมัติ", bg: "#FEF3C7", color: "#92400E" },
+  rejected: { label: "ไม่อนุมัติ", bg: "#FEE2E2", color: "#991B1B" },
   approved: { label: "อนุมัติแล้ว", bg: "#E0E7FF", color: "#3730A3" },
+  cancelled: { label: "ยกเลิกแล้ว", bg: "#FEE2E2", color: "#991B1B" },
   sent: { label: "ส่งแล้ว", bg: "#DCFCE7", color: "#166534" },
 };
+const PAUSED_STATUS = { label: "หยุดชั่วคราว", bg: "#F3F4F6", color: "#6B7280" };
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -208,7 +211,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {recentCampaigns.map((c, i) => {
-                const s = STATUS[c.status];
+                const s = c.paused ? PAUSED_STATUS : STATUS[c.status];
                 return (
                   <tr key={c.id} style={{ borderBottom: i < recentCampaigns.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
                     <td className="px-6 py-4 font-medium" style={{ color: "var(--color-ink)" }}>{c.name}</td>

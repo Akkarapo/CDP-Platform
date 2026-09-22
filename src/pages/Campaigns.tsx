@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { useData } from "../lib/store";
+import { supabase } from "../lib/supabase";
 import { buildProductStats, classifyRfmCell, RFM_MATRIX } from "../lib/analytics";
 import type { Segment, ChurnRisk, CampaignRecord } from "../lib/types";
 import { useAuth } from "../lib/auth";
@@ -18,11 +19,16 @@ const CHURN_FILTERS: { value: ChurnFilter; label: string }[] = [
 
 type RfmFilter = string | "ทุกกลุ่ม";
 
+const TONES = ["อบอุ่นเป็นกันเอง", "สนุกสนาน", "ทางการ", "หรูหรา"];
+
 const STATUS_META: Record<CampaignRecord["status"], { label: string; bg: string; color: string }> = {
   pending: { label: "รออนุมัติ", bg: "#FEF3C7", color: "#92400E" },
+  rejected: { label: "ไม่อนุมัติ", bg: "#FEE2E2", color: "#991B1B" },
   approved: { label: "อนุมัติแล้ว", bg: "#E0E7FF", color: "#3730A3" },
+  cancelled: { label: "ยกเลิกแล้ว", bg: "#FEE2E2", color: "#991B1B" },
   sent: { label: "ส่งแล้ว", bg: "#DCFCE7", color: "#166534" },
 };
+const PAUSED_META = { label: "หยุดชั่วคราว", bg: "#F3F4F6", color: "#6B7280" };
 
 function LineChatPreview({ message, imageUrl }: { message: string; imageUrl?: string }) {
   const lines = message.split("\n");
@@ -63,6 +69,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   const [churnFilter, setChurnFilter] = useState<ChurnFilter>("ทุกระดับ");
   const [rfmFilter, setRfmFilter] = useState<RfmFilter>("ทุกกลุ่ม");
   const [prompt, setPrompt] = useState("");
+  const [tone, setTone] = useState<string>(TONES[0]);
   const [generated, setGenerated] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [campaignId, setCampaignId] = useState(() => crypto.randomUUID());
@@ -87,10 +94,15 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
     return matchesSegment && matchesChurn && matchesRfm;
   }), [customers, target, churnFilter, rfmFilter]);
 
-  const suggestedProducts = useMemo(() => {
+  // Shown to the marketer purely as decision-support — real past sales for
+  // this audience. Not sent to the AI and never used to gate what it can
+  // write about: a campaign may be for a brand-new product never sold
+  // before, or a service (tutoring, a concert) that isn't a "product" at
+  // all, so nothing here should block the AI from writing about it.
+  const audienceProducts = useMemo(() => {
     const memberIds = new Set(audience.map((c) => c.id));
     const audienceTx = rawTransactions.filter((t) => memberIds.has(t.customer_id));
-    return buildProductStats(audienceTx).topProducts.slice(0, 3).map((p) => p.name);
+    return buildProductStats(audienceTx).topProducts.slice(0, 5).map((p) => p.name);
   }, [audience, rawTransactions]);
 
   const targetCount = audience.length;
@@ -113,7 +125,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           rfmCellLabel: rfmLabel,
           rfmCellDescription: rfmCell?.description ?? "",
           customerCount: targetCount,
-          topProducts: suggestedProducts,
+          toneLabel: tone,
         }),
       });
       const data = await res.json();
@@ -158,7 +170,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           <p className="text-base font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>บันทึกแคมเปญแล้ว</p>
           <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>ดูสถานะและอัปเดตได้ที่แท็บ "ประวัติแคมเปญ"</p>
         </div>
-        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setGenerated(""); setImageUrl(""); setCampaignId(crypto.randomUUID()); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setTone(TONES[0]); setGenerated(""); setImageUrl(""); setCampaignId(crypto.randomUUID()); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
           สร้างแคมเปญใหม่
         </button>
       </div>
@@ -234,7 +246,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>2</span>
           Prompt สำหรับ AI
         </p>
-        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>บอกโจทย์แคมเปญที่ต้องการ AI จะคิดข้อความให้ตามกลุ่มเป้าหมาย (Segment / Churn / RFM) และสินค้าขายดีจริงของกลุ่มนี้</p>
+        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>บอกโจทย์แคมเปญที่ต้องการ AI จะคิดข้อความให้ตามกลุ่มเป้าหมาย (Segment / Churn / RFM) — AI จะพูดถึงเฉพาะสินค้าหรือบริการที่พิมพ์ไว้ในโจทย์นี้เท่านั้น (รองรับสินค้าใหม่หรือบริการที่ไม่มีในประวัติการขายด้วย)</p>
         <div className="ml-7 space-y-2">
           <textarea
             value={prompt}
@@ -244,13 +256,19 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
             className="w-full rounded-xl px-4 py-3 text-sm resize-none outline-none"
             style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)", lineHeight: 1.6 }}
           />
-          {target && suggestedProducts.length > 0 && (
-            <div className="flex items-start gap-2.5 rounded-xl px-3.5 py-3" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs mb-1" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้ (จะส่งให้ AI อ้างอิง): {suggestedProducts.join(", ")}</p>
-              </div>
+          <div>
+            <label className="text-xs font-medium mb-1.5 block" style={{ color: "var(--color-ink-2)" }}>โทนของข้อความ</label>
+            <div className="grid grid-cols-4 gap-2">
+              {TONES.map((t) => {
+                const active = tone === t;
+                return (
+                  <button key={t} onClick={() => setTone(t)} className="text-left rounded-xl px-3 py-2" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: "pointer" }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{t}</p>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
           <div>
             <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>รูปภาพประกอบ (ลิงก์ URL, ไม่บังคับ)</label>
             <input
@@ -329,10 +347,10 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
             <span className="font-medium text-right" style={{ color: "var(--color-ink)" }}>{rfmLabel}</span>
           </div>
         </div>
-        {suggestedProducts.length > 0 && (
+        {audienceProducts.length > 0 && (
           <div className="pt-4 mt-4" style={{ borderTop: "1px solid var(--color-rule)" }}>
-            <p className="text-xs mb-1.5" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้</p>
-            <p className="text-xs leading-relaxed" style={{ color: "var(--color-ink)" }}>{suggestedProducts.join(", ")}</p>
+            <p className="text-xs mb-1.5" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้ (ไว้ประกอบการตัดสินใจเขียนโจทย์ — ไม่ได้ส่งให้ AI)</p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--color-ink)" }}>{audienceProducts.join(", ")}</p>
           </div>
         )}
       </div>
@@ -341,11 +359,111 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   );
 }
 
+interface ClickRow {
+  code: string;
+  clicked_at: string;
+  confirmed_line_user_id: string | null;
+  confirmed_at: string | null;
+}
+
+function CampaignDetailModal({ campaign, onClose }: { campaign: CampaignRecord; onClose: () => void }) {
+  const [clicks, setClicks] = useState<ClickRow[]>([]);
+  const [lineNames, setLineNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      const { data, error: clicksError } = await supabase
+        .from("campaign_clicks")
+        .select("code,clicked_at,confirmed_line_user_id,confirmed_at")
+        .eq("campaign_id", campaign.id)
+        .order("clicked_at", { ascending: false });
+      if (!active) return;
+      if (clicksError) { setError(clicksError.message); setLoading(false); return; }
+      const rows = data ?? [];
+      setClicks(rows);
+
+      const confirmedIds = Array.from(new Set(rows.map((r) => r.confirmed_line_user_id).filter((id): id is string => Boolean(id))));
+      if (confirmedIds.length > 0) {
+        const { data: users } = await supabase.from("line_users").select("line_user_id,display_name").in("line_user_id", confirmedIds);
+        if (!active) return;
+        const map: Record<string, string> = {};
+        (users ?? []).forEach((u) => { map[u.line_user_id] = u.display_name ?? u.line_user_id; });
+        setLineNames(map);
+      }
+      setLoading(false);
+    })();
+    return () => { active = false; };
+  }, [campaign.id]);
+
+  const confirmedCount = clicks.filter((c) => c.confirmed_line_user_id).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0" style={{ backgroundColor: "rgba(26,25,23,0.4)", backdropFilter: "blur(3px)" }} onClick={onClose} />
+      <div className="relative w-full flex flex-col" style={{ maxWidth: 560, maxHeight: "85vh", backgroundColor: "var(--color-surface)", borderRadius: 20, border: "1px solid var(--color-rule)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: "1px solid var(--color-rule)" }}>
+          <p className="text-base font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{campaign.name}</p>
+          <button onClick={onClose} aria-label="ปิด" className="text-xl" style={{ color: "var(--color-ink-3)", background: "none", border: "none", cursor: "pointer" }}>×</button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {campaign.imageUrl && <img src={campaign.imageUrl} alt="" className="rounded-xl w-full" />}
+          <div>
+            <p className="text-xs font-medium mb-1.5" style={{ color: "var(--color-ink-3)" }}>ข้อความที่ส่ง</p>
+            <p className="text-sm whitespace-pre-wrap rounded-xl px-4 py-3" style={{ backgroundColor: "var(--color-ground)", color: "var(--color-ink)", lineHeight: 1.6 }}>{campaign.message}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl px-4 py-3" style={{ backgroundColor: "var(--color-ground)" }}>
+              <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>คลิกลิงก์ทั้งหมด</p>
+              <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{clicks.length}</p>
+            </div>
+            <div className="rounded-xl px-4 py-3" style={{ backgroundColor: "var(--color-ground)" }}>
+              <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>ใช้โค้ดยืนยันแล้ว</p>
+              <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{confirmedCount}</p>
+            </div>
+          </div>
+          {error && <p role="alert" className="text-xs" style={{ color: "#991B1B" }}>{error}</p>}
+          {loading ? (
+            <p className="text-xs" style={{ color: "var(--color-ink-3)" }}>กำลังโหลด…</p>
+          ) : clicks.length > 0 && (
+            <div>
+              <p className="text-xs font-medium mb-2" style={{ color: "var(--color-ink-3)" }}>ประวัติการคลิก</p>
+              <div className="space-y-1.5">
+                {clicks.map((c) => (
+                  <div key={c.code} className="flex items-center justify-between text-xs px-3 py-2 rounded-lg" style={{ backgroundColor: "var(--color-ground)" }}>
+                    <span className="font-mono" style={{ color: "var(--color-ink-2)" }}>{c.code}</span>
+                    <span style={{ color: c.confirmed_line_user_id ? "#166534" : "var(--color-ink-3)" }}>
+                      {c.confirmed_line_user_id ? `ยืนยันแล้ว · ${lineNames[c.confirmed_line_user_id] ?? c.confirmed_line_user_id}` : "ยังไม่ยืนยัน"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="px-6 pb-5">
+          <button onClick={onClose} className="w-full text-sm font-medium py-2.5 rounded-xl" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>ปิด</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HistoryTab({ canEdit }: { canEdit: boolean }) {
-  const { campaigns, updateCampaignStatus, sendCampaign } = useData();
+  const { campaigns, updateCampaignStatus, setCampaignPaused, sendCampaign } = useData();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+  const [viewingCampaign, setViewingCampaign] = useState<CampaignRecord | null>(null);
 
   async function copyTrackingLink(campaignId: string) {
     try {
@@ -399,8 +517,8 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
                   )}
                 </td>
                 <td className="px-3 py-3.5">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: s.bg, color: s.color }}>
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />{s.label}
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: c.paused ? PAUSED_META.bg : s.bg, color: c.paused ? PAUSED_META.color : s.color }}>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.paused ? PAUSED_META.color : s.color }} />{c.paused ? PAUSED_META.label : s.label}
                   </span>
                 </td>
                 <td className="px-3 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{new Date(c.createdAt).toLocaleDateString("th-TH-u-ca-gregory")}</td>
@@ -408,19 +526,37 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
                   <div className="flex flex-col items-end gap-1.5">
                   <div className="flex items-center justify-end gap-2">
                     {canEdit && c.status === "pending" && (
-                      <button onClick={() => void updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
+                      <>
+                        <button onClick={() => void updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
+                        <button onClick={() => void updateCampaignStatus(c.id, "rejected")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "transparent", border: "1px solid var(--color-rule)", color: "#991B1B", cursor: "pointer" }}>ไม่อนุมัติ</button>
+                      </>
                     )}
-                    {canEdit && c.status === "approved" && (
-                      <button onClick={() => void handleSend(c.id)} disabled={sendingId === c.id} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: sendingId === c.id ? "not-allowed" : "pointer", opacity: sendingId === c.id ? 0.6 : 1 }}>
-                        {sendingId === c.id ? "กำลังส่ง…" : "ส่งเข้า LINE จริง"}
-                      </button>
+                    {canEdit && (c.status === "approved" || c.status === "sent") && !c.paused && (
+                      <>
+                        {c.status === "approved" && (
+                          <button onClick={() => void handleSend(c.id)} disabled={sendingId === c.id} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: sendingId === c.id ? "not-allowed" : "pointer", opacity: sendingId === c.id ? 0.6 : 1 }}>
+                            {sendingId === c.id ? "กำลังส่ง…" : "ส่งเข้า LINE จริง"}
+                          </button>
+                        )}
+                        <button onClick={() => void setCampaignPaused(c.id, true)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>หยุดชั่วคราว</button>
+                        <button onClick={() => void updateCampaignStatus(c.id, "cancelled")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "transparent", border: "1px solid var(--color-rule)", color: "#991B1B", cursor: "pointer" }}>ยกเลิกแคมเปญ</button>
+                      </>
                     )}
-                    {c.status !== "pending" && (
+                    {canEdit && (c.status === "approved" || c.status === "sent") && c.paused && (
+                      <>
+                        <button onClick={() => void setCampaignPaused(c.id, false)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>ดำเนินการต่อ</button>
+                        <button onClick={() => void updateCampaignStatus(c.id, "cancelled")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "transparent", border: "1px solid var(--color-rule)", color: "#991B1B", cursor: "pointer" }}>ยกเลิกแคมเปญ</button>
+                      </>
+                    )}
+                    {(c.status === "approved" || c.status === "sent") && (
                       <button onClick={() => void copyTrackingLink(c.id)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: copiedId === c.id ? "#DCFCE7" : "var(--color-ground)", color: copiedId === c.id ? "#166534" : "var(--color-ink-2)", border: "1px solid var(--color-rule)", cursor: "pointer" }}>
                         {copiedId === c.id ? "คัดลอกแล้ว" : "คัดลอกลิงก์ติดตาม"}
                       </button>
                     )}
                     {!canEdit && c.status === "pending" && <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>ดูอย่างเดียว</span>}
+                    <button onClick={() => setViewingCampaign(c)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>
+                      ดูรายละเอียด
+                    </button>
                   </div>
                   {sendResult?.id === c.id && (
                     <p className="text-xs" style={{ color: sendResult.ok ? "#166534" : "#991B1B" }}>{sendResult.message}</p>
@@ -432,6 +568,7 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
           })}
         </tbody>
       </table>
+      {viewingCampaign && <CampaignDetailModal campaign={viewingCampaign} onClose={() => setViewingCampaign(null)} />}
     </div>
   );
 }

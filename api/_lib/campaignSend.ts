@@ -15,11 +15,13 @@ export async function sendCampaignToLine(campaignId: string, accessToken: string
 
   const { data: campaign, error: campaignError } = await admin
     .from("campaigns")
-    .select("id,status,message,target_segment,image_url")
+    .select("id,status,paused,message,target_segment,image_url")
     .eq("id", campaignId)
     .single();
   if (campaignError || !campaign) throw new Error("ไม่พบแคมเปญนี้");
   if (campaign.status === "sent") throw new Error("แคมเปญนี้ถูกส่งไปแล้ว");
+  if (campaign.status !== "approved") throw new Error("ส่งได้เฉพาะแคมเปญที่อนุมัติแล้วเท่านั้น");
+  if (campaign.paused) throw new Error("แคมเปญนี้หยุดชั่วคราวอยู่ กดดำเนินการต่อก่อนถึงจะส่งได้");
 
   let query = admin.from("line_users").select("line_user_id").eq("followed", true);
   if (campaign.target_segment !== "ทุก Segment") {

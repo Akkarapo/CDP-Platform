@@ -142,8 +142,6 @@ export default function SegmentProfile() {
       <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-ink-3)" }}>
         <button onClick={() => navigate("/customers")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-ink-3)", padding: 0 }}>Customers</button>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        <span>Segment Profile</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3.5 2l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         <span style={{ color: "var(--color-ink)" }}>{seg}</span>
       </div>
 

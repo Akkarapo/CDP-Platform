@@ -115,8 +115,9 @@ interface DataContextValue {
   rawTransactions: RawTransaction[];
   productStats: ReturnType<typeof buildProductStats>;
   campaigns: CampaignRecord[];
-  addCampaign: (c: Omit<CampaignRecord, "createdAt">) => Promise<void>;
+  addCampaign: (c: Omit<CampaignRecord, "createdAt" | "paused">) => Promise<void>;
   updateCampaignStatus: (id: string, status: CampaignRecord["status"]) => Promise<void>;
+  setCampaignPaused: (id: string, paused: boolean) => Promise<void>;
   sendCampaign: (id: string) => Promise<number>;
   importLog: ImportLogEntry[];
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
@@ -167,7 +168,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     supabase
       .from("campaigns")
-      .select("id,name,target_segment,status,message,created_at,image_url")
+      .select("id,name,target_segment,status,paused,message,created_at,image_url")
       .order("created_at", { ascending: false })
       .then(({ data, error: campaignError }) => {
         if (!active) return;
@@ -180,6 +181,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           name: row.name,
           targetSegment: row.target_segment as CampaignRecord["targetSegment"],
           status: row.status as CampaignRecord["status"],
+          paused: row.paused,
           message: row.message,
           createdAt: row.created_at,
           imageUrl: row.image_url ?? undefined,
@@ -262,7 +264,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  async function addCampaign(c: Omit<CampaignRecord, "createdAt">) {
+  async function addCampaign(c: Omit<CampaignRecord, "createdAt" | "paused">) {
     const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user) throw authError ?? new Error("กรุณาเข้าสู่ระบบอีกครั้ง");
 
@@ -277,7 +279,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         image_url: c.imageUrl ?? null,
         created_by: authData.user.id,
       })
-      .select("id,name,target_segment,status,message,created_at,image_url")
+      .select("id,name,target_segment,status,paused,message,created_at,image_url")
       .single();
 
     if (campaignError) throw campaignError;
@@ -286,6 +288,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       name: data.name,
       targetSegment: data.target_segment as CampaignRecord["targetSegment"],
       status: data.status as CampaignRecord["status"],
+      paused: data.paused,
       message: data.message,
       createdAt: data.created_at,
       imageUrl: data.image_url ?? undefined,
@@ -299,6 +302,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (campaignError) throw campaignError;
     setCampaigns((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
+  }
+  async function setCampaignPaused(id: string, paused: boolean) {
+    const { error: campaignError } = await supabase
+      .from("campaigns")
+      .update({ paused, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (campaignError) throw campaignError;
+    setCampaigns((prev) => prev.map((c) => (c.id === id ? { ...c, paused } : c)));
   }
   async function sendCampaign(id: string): Promise<number> {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -535,6 +547,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     campaigns,
     addCampaign,
     updateCampaignStatus,
+    setCampaignPaused,
     sendCampaign,
     importLog,
     importCsvFile,
