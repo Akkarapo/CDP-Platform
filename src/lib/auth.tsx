@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { supabase } from "./supabase";
 
 export interface AuthUser {
   sub: string;
@@ -14,6 +15,8 @@ export interface AuthUser {
   picture: string;
   expiresAt: number;
 }
+
+export type WorkspaceRole = "admin" | "editor" | "viewer";
 
 interface GoogleIdTokenPayload {
   aud?: string;
@@ -33,11 +36,13 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as
 
 interface AuthContextValue {
   user: AuthUser | null;
+  role: WorkspaceRole | null;
+  canManageMembers: boolean;
+  canEditCampaigns: boolean;
   ready: boolean;
   error: string | null;
   clientIdConfigured: boolean;
   signOut: () => void;
-  devSignIn: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -142,14 +147,72 @@ export function AuthProvider({
 }: {
   children: ReactNode;
 }) {
-  const [user, setUser] = useState<AuthUser | null>(loadStoredUser);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [role, setRole] = useState<WorkspaceRole | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initialized = useRef(false);
 
   useEffect(() => {
-    if (!CLIENT_ID) {
+    let active = true;
+
+    async function restoreSession() {
+      const { data, error: sessionError } = await supabase.auth.getUser();
+
+      if (!active) return;
+
+      if (sessionError || !data.user) {
+        localStorage.removeItem(LS_KEY);
+        setUser(null);
+        setRole(null);
+        setReady(true);
+        return;
+      }
+
+      const { data: membership, error: membershipError } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("user_id", data.user.id)
+        .maybeSingle();
+
+      if (!active) return;
+
+      if (membershipError || !membership) {
+        await supabase.auth.signOut();
+        localStorage.removeItem(LS_KEY);
+        setUser(null);
+        setRole(null);
+        setReady(true);
+        return;
+      }
+
+      const stored = loadStoredUser();
+      const metadata = data.user.user_metadata;
+      const restored: AuthUser = stored?.email === data.user.email
+        ? stored
+        : {
+            sub: data.user.id,
+            name: metadata.full_name ?? metadata.name ?? data.user.email ?? "ผู้ใช้",
+            email: data.user.email ?? "",
+            picture: metadata.avatar_url ?? metadata.picture ?? "",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          };
+
+      setUser(restored);
+      setRole(membership.role as WorkspaceRole);
+      localStorage.setItem(LS_KEY, JSON.stringify(restored));
       setReady(true);
+    }
+
+    void restoreSession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!CLIENT_ID) {
       return;
     }
 
@@ -163,10 +226,13 @@ export function AuthProvider({
       window.google.accounts.id.initialize({
         client_id: CLIENT_ID,
 
-        callback: (response: { credential?: string }) => {
-          const googleUser = response.credential
-            ? decodeGoogleUser(response.credential)
-            : null;
+        callback: async (response: { credential?: string }) => {
+          if (!response.credential) {
+            setError("ไม่ได้รับข้อมูลยืนยันตัวตนจาก Google");
+            return;
+          }
+
+          const googleUser = decodeGoogleUser(response.credential);
 
           if (!googleUser) {
             setError(
@@ -175,8 +241,39 @@ export function AuthProvider({
             return;
           }
 
+          const { data: authData, error: signInError } =
+            await supabase.auth.signInWithIdToken({
+              provider: "google",
+              token: response.credential,
+            });
+
+          if (signInError || !authData.user) {
+            setError(
+              signInError?.message ??
+                "ไม่สามารถเข้าสู่ระบบ Supabase ได้"
+            );
+            return;
+          }
+
+          const { data: membership, error: membershipError } =
+            await supabase
+              .from("workspace_members")
+              .select("role")
+              .eq("user_id", authData.user.id)
+              .maybeSingle();
+
+          if (membershipError || !membership) {
+            await supabase.auth.signOut();
+            localStorage.removeItem(LS_KEY);
+            setUser(null);
+            setRole(null);
+            setError("อีเมลนี้ยังไม่ได้รับเชิญให้เข้าใช้งานระบบ");
+            return;
+          }
+
           setError(null);
           setUser(googleUser);
+          setRole(membership.role as WorkspaceRole);
 
           localStorage.setItem(
             LS_KEY,
@@ -188,7 +285,6 @@ export function AuthProvider({
         cancel_on_tap_outside: true,
       });
 
-      setReady(true);
     }
 
     const existing = document.getElementById(
@@ -221,7 +317,6 @@ export function AuthProvider({
       setError(
         "โหลด Google Sign-In ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า"
       );
-      setReady(true);
     };
 
     document.head.appendChild(script);
@@ -248,39 +343,26 @@ export function AuthProvider({
   }, [user]);
 
   function signOut() {
+    void supabase.auth.signOut();
     setUser(null);
+    setRole(null);
     setError(null);
     localStorage.removeItem(LS_KEY);
 
     window.google?.accounts?.id?.disableAutoSelect?.();
   }
 
-  function devSignIn() {
-    const demo: AuthUser = {
-      sub: "dev",
-      name: "Demo User (dev mode)",
-      email: "demo@localhost",
-      picture: "",
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-    };
-
-    setUser(demo);
-
-    localStorage.setItem(
-      LS_KEY,
-      JSON.stringify(demo)
-    );
-  }
-
   return (
     <AuthContext.Provider
       value={{
         user,
+        role,
+        canManageMembers: role === "admin",
+        canEditCampaigns: role === "admin" || role === "editor",
         ready,
         error,
         clientIdConfigured: Boolean(CLIENT_ID),
         signOut,
-        devSignIn,
       }}
     >
       {children}

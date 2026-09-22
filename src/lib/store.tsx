@@ -2,11 +2,12 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { fetchCsv, parseCsv } from "./csv";
 import { buildCustomers, buildProductStats } from "./analytics";
 import type { RawCustomer, RawTransaction, Customer, CampaignRecord, ImportLogEntry } from "./types";
+import { supabase } from "./supabase";
+import { useAuth } from "./auth";
 
 const LS_KEYS = {
   extraCustomers: "cdp.extraCustomers",
   extraTransactions: "cdp.extraTransactions",
-  campaigns: "cdp.campaigns",
   importLog: "cdp.importLog",
 };
 
@@ -90,8 +91,8 @@ interface DataContextValue {
   rawTransactions: RawTransaction[];
   productStats: ReturnType<typeof buildProductStats>;
   campaigns: CampaignRecord[];
-  addCampaign: (c: Omit<CampaignRecord, "id" | "createdAt">) => void;
-  updateCampaignStatus: (id: string, status: CampaignRecord["status"]) => void;
+  addCampaign: (c: Omit<CampaignRecord, "id" | "createdAt">) => Promise<void>;
+  updateCampaignStatus: (id: string, status: CampaignRecord["status"]) => Promise<void>;
   importLog: ImportLogEntry[];
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
   removeImport: (id: string) => void;
@@ -101,13 +102,14 @@ interface DataContextValue {
 const DataContext = createContext<DataContextValue | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [baseCustomers, setBaseCustomers] = useState<RawCustomer[]>([]);
   const [baseTransactions, setBaseTransactions] = useState<RawTransaction[]>([]);
   const [extraCustomers, setExtraCustomers] = useState<RawCustomer[]>(() => loadLS(LS_KEYS.extraCustomers, []));
   const [extraTransactions, setExtraTransactions] = useState<RawTransaction[]>(() => loadLS(LS_KEYS.extraTransactions, []));
-  const [campaigns, setCampaigns] = useState<CampaignRecord[]>(() => loadLS(LS_KEYS.campaigns, []));
+  const [campaigns, setCampaigns] = useState<CampaignRecord[]>([]);
   const [importLog, setImportLog] = useState<ImportLogEntry[]>(() => loadLS(LS_KEYS.importLog, []));
 
   useEffect(() => {
@@ -120,6 +122,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!user) {
+      setCampaigns([]);
+      return;
+    }
+
+    let active = true;
+
+    supabase
+      .from("campaigns")
+      .select("id,name,target_segment,status,message,created_at")
+      .order("created_at", { ascending: false })
+      .then(({ data, error: campaignError }) => {
+        if (!active) return;
+        if (campaignError) {
+          setError(campaignError.message);
+          return;
+        }
+        setCampaigns((data ?? []).map((row) => ({
+          id: row.id,
+          name: row.name,
+          targetSegment: row.target_segment as CampaignRecord["targetSegment"],
+          status: row.status as CampaignRecord["status"],
+          message: row.message,
+          createdAt: row.created_at,
+        })));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
   const allCustomersRaw = useMemo(() => [...baseCustomers, ...extraCustomers], [baseCustomers, extraCustomers]);
   const allTransactionsRaw = useMemo(() => [...baseTransactions, ...extraTransactions], [baseTransactions, extraTransactions]);
 
@@ -129,19 +164,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
   const productStats = useMemo(() => buildProductStats(allTransactionsRaw), [allTransactionsRaw]);
 
-  function addCampaign(c: Omit<CampaignRecord, "id" | "createdAt">) {
-    setCampaigns((prev) => {
-      const next = [{ ...c, id: `camp_${Date.now()}`, createdAt: new Date().toISOString() }, ...prev];
-      saveLS(LS_KEYS.campaigns, next);
-      return next;
-    });
+  async function addCampaign(c: Omit<CampaignRecord, "id" | "createdAt">) {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) throw authError ?? new Error("กรุณาเข้าสู่ระบบอีกครั้ง");
+
+    const { data, error: campaignError } = await supabase
+      .from("campaigns")
+      .insert({
+        name: c.name,
+        target_segment: c.targetSegment,
+        status: c.status,
+        message: c.message,
+        created_by: authData.user.id,
+      })
+      .select("id,name,target_segment,status,message,created_at")
+      .single();
+
+    if (campaignError) throw campaignError;
+    setCampaigns((prev) => [{
+      id: data.id,
+      name: data.name,
+      targetSegment: data.target_segment as CampaignRecord["targetSegment"],
+      status: data.status as CampaignRecord["status"],
+      message: data.message,
+      createdAt: data.created_at,
+    }, ...prev]);
   }
-  function updateCampaignStatus(id: string, status: CampaignRecord["status"]) {
-    setCampaigns((prev) => {
-      const next = prev.map((c) => (c.id === id ? { ...c, status } : c));
-      saveLS(LS_KEYS.campaigns, next);
-      return next;
-    });
+  async function updateCampaignStatus(id: string, status: CampaignRecord["status"]) {
+    const { error: campaignError } = await supabase
+      .from("campaigns")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (campaignError) throw campaignError;
+    setCampaigns((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
   }
 
   function importCsvFile(fileName: string, text: string) {

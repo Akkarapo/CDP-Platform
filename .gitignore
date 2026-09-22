@@ -6,6 +6,7 @@ build/
 !.env.example
 .vite/
 .idea/
+supabase/.temp/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*

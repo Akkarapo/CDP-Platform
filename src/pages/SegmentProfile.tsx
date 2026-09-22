@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router";
 import { useData } from "../lib/store";
 import { buildProductStats } from "../lib/analytics";
 import type { Customer, Segment, ChurnRisk } from "../lib/types";
+import { useAuth } from "../lib/auth";
 
 const SEGMENT_META: Record<Segment, { bg: string; color: string }> = {
   Premium: { bg: "#1A1917", color: "#ffffff" },
@@ -96,6 +97,7 @@ function MiniDrawer({ customer, onClose }: { customer: Customer; onClose: () => 
 }
 
 export default function SegmentProfile() {
+  const { canEditCampaigns } = useAuth();
   const { segment } = useParams<{ segment: string }>();
   const navigate = useNavigate();
   const { customers, rawTransactions, loading } = useData();
@@ -151,10 +153,10 @@ export default function SegmentProfile() {
             <span className="inline-flex items-center px-3.5 py-1.5 rounded-full text-sm font-semibold" style={{ backgroundColor: meta.bg, color: meta.color }}>{seg}</span>
             <h1 className="text-2xl font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{seg} Segment</h1>
           </div>
-          <button onClick={handleCreateCampaign} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+          {canEditCampaigns && <button onClick={handleCreateCampaign} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
             สร้างแคมเปญสำหรับกลุ่มนี้
-          </button>
+          </button>}
         </div>
 
         <div className="grid grid-cols-5 gap-3">
@@ -279,10 +281,10 @@ export default function SegmentProfile() {
             </div>
           ))}
         </div>
-        <button onClick={handleCreateCampaign} className="flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-medium w-full justify-center" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+        {canEditCampaigns && <button onClick={handleCreateCampaign} className="flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-medium w-full justify-center" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M7.5 1v13M1 7.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
           สร้างแคมเปญสำหรับกลุ่มนี้
-        </button>
+        </button>}
       </div>
 
       <div>
