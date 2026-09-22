@@ -4,7 +4,7 @@ import { useAuth, GoogleSignInButton } from "../lib/auth";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, clientIdConfigured, devSignIn } = useAuth();
+  const { user, ready, error, clientIdConfigured, devSignIn } = useAuth();
 
   useEffect(() => {
     if (user) navigate("/dashboard");
@@ -54,8 +54,24 @@ export default function Login() {
           </p>
 
           {clientIdConfigured ? (
-            <div className="flex justify-center">
-              <GoogleSignInButton />
+            <div className="space-y-3">
+              {!ready && (
+                <p className="text-sm text-center" style={{ color: "var(--color-ink-3)" }}>
+                  กำลังโหลด Google Sign-In…
+                </p>
+              )}
+              <div className="flex justify-center">
+                <GoogleSignInButton />
+              </div>
+              {error && (
+                <p
+                  role="alert"
+                  className="text-xs leading-relaxed rounded-xl px-3.5 py-3"
+                  style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                >
+                  {error}
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
