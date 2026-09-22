@@ -545,7 +545,14 @@ export default function Settings() {
           {team.map((member, index) => {
             const isAdminTier = member.role === "admin" || member.role === "super_admin";
             const dropdownDisabled = member.isYou || (isAdminTier && !isSuperAdmin);
-            const dropdownOptions = isSuperAdmin ? ASSIGNABLE_ROLES : (["editor", "viewer"] as WorkspaceRole[]);
+            const assignableForCaller = isSuperAdmin ? ASSIGNABLE_ROLES : (["editor", "viewer"] as WorkspaceRole[]);
+            // The <select>'s current value must always have a matching <option>,
+            // even when that role isn't one this viewer could reassign TO —
+            // otherwise the browser silently falls back to the first listed
+            // option (e.g. an admin row shows as "Editor" to a non-super-admin
+            // viewer, even though the background color still reflects the
+            // real role correctly).
+            const dropdownOptions = Array.from(new Set<WorkspaceRole>([member.role, ...assignableForCaller]));
             const canRemove = !member.isYou && member.role !== "super_admin" && (member.role !== "admin" || isSuperAdmin);
             const canTransfer = isSuperAdmin && member.status === "active" && !member.isYou && member.role !== "super_admin";
             return <tr key={`${member.status}-${member.id}`} style={{ borderBottom: index < team.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
@@ -561,7 +568,6 @@ export default function Settings() {
                     className="appearance-none rounded-full pl-3.5 pr-8 py-1.5 text-xs font-medium outline-none"
                     style={{ backgroundColor: ROLE_META[member.role].bg, color: ROLE_META[member.role].color, border: "none", cursor: dropdownDisabled ? "not-allowed" : "pointer" }}
                   >
-                    {member.role === "super_admin" && <option value="super_admin">{ROLE_META.super_admin.label}</option>}
                     {dropdownOptions.map((item) => <option key={item} value={item}>{ROLE_META[item].label}</option>)}
                   </select>
                   <svg className="pointer-events-none absolute" style={{ right: "10px", top: "50%", transform: "translateY(-50%)" }} width="10" height="10" viewBox="0 0 10 10" fill="none">
