@@ -17,6 +17,12 @@ function ProtectedRoute() {
   return <Outlet />;
 }
 
+function RequireEditor() {
+  const { canEditCampaigns } = useAuth();
+  if (!canEditCampaigns) return <Navigate to="/dashboard" replace />;
+  return <Outlet />;
+}
+
 export const router = createBrowserRouter([
   { path: "/", element: <Login /> },
   {
@@ -29,8 +35,13 @@ export const router = createBrowserRouter([
           { path: "/customers", element: <Customers /> },
           { path: "/customers/segment/:segment", element: <SegmentProfile /> },
           { path: "/products", element: <Products /> },
-          { path: "/import", element: <Import /> },
-          { path: "/campaigns", element: <Campaigns /> },
+          {
+            element: <RequireEditor />,
+            children: [
+              { path: "/import", element: <Import /> },
+              { path: "/campaigns", element: <Campaigns /> },
+            ],
+          },
           { path: "/settings", element: <Settings /> },
         ],
       },

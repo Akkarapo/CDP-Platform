@@ -101,6 +101,16 @@ export default function Settings() {
     await loadTeam();
   }
 
+  async function removeMember(entry: TeamEntry) {
+    if (!window.confirm(`ลบ ${entry.name} ออกจากทีม?`)) return;
+    setTeamError(null);
+    const table = entry.status === "active" ? "workspace_members" : "workspace_invitations";
+    const key = entry.status === "active" ? "user_id" : "id";
+    const { error } = await supabase.from(table).delete().eq(key, entry.id);
+    if (error) { setTeamError(error.message); return; }
+    await loadTeam();
+  }
+
   // Derived straight from the shared data (not local state) so the log
   // survives navigating away from and back to this page — the simulator
   // itself runs at the app root, this page is only a viewer onto it.
@@ -256,8 +266,36 @@ export default function Settings() {
       {canManageMembers ? <SectionCard>
         <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: "1px solid var(--color-rule)" }}><div><p className="text-sm font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>จัดการทีม</p><p className="text-xs mt-0.5" style={{ color: "var(--color-ink-3)" }}>{team.length} รายการ</p></div><button onClick={() => setInviteOpen(true)} className="px-4 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>เชิญสมาชิก</button></div>
         {teamError && <p role="alert" className="mx-5 mt-4 text-xs" style={{ color: "#991B1B" }}>{teamError}</p>}
-        {loadingTeam ? <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>กำลังโหลดสมาชิก…</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr style={{ borderBottom: "1px solid var(--color-rule)" }}>{["สมาชิก", "สถานะ", "Role"].map((heading, index) => <th key={heading} className={`px-5 py-3 text-xs font-medium ${index === 2 ? "text-right" : "text-left"}`} style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}</tr></thead><tbody>
-          {team.map((member, index) => <tr key={`${member.status}-${member.id}`} style={{ borderBottom: index < team.length - 1 ? "1px solid var(--color-rule)" : "none" }}><td className="px-5 py-3.5"><p className="font-medium">{member.name}{member.isYou && <span className="ml-2 text-xs" style={{ color: "var(--color-ink-3)" }}>(คุณ)</span>}</p><p className="text-xs" style={{ color: "var(--color-ink-3)" }}>{member.email}</p></td><td className="px-5 py-3.5"><span className="text-xs" style={{ color: member.status === "active" ? "#166534" : "#92400E" }}>{member.status === "active" ? "ใช้งานแล้ว" : "รอล็อกอินครั้งแรก"}</span></td><td className="px-5 py-3.5 text-right"><select aria-label={`Role ของ ${member.email}`} value={member.role} onChange={(event) => void changeRole(member, event.target.value as WorkspaceRole)} disabled={member.isYou} className="rounded-lg px-2.5 py-1.5 text-xs" style={{ backgroundColor: ROLE_META[member.role].bg, color: ROLE_META[member.role].color, border: "none", cursor: member.isYou ? "not-allowed" : "pointer" }}>{(Object.keys(ROLE_META) as WorkspaceRole[]).map((item) => <option key={item} value={item}>{ROLE_META[item].label}</option>)}</select></td></tr>)}
+        {loadingTeam ? <p className="px-6 py-8 text-sm" style={{ color: "var(--color-ink-3)" }}>กำลังโหลดสมาชิก…</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr style={{ borderBottom: "1px solid var(--color-rule)" }}>
+          {["สมาชิก", "สถานะ", "Role", ""].map((heading, index) => <th key={`${heading}-${index}`} className={`px-5 py-3 text-xs font-medium ${index === 3 ? "text-right" : "text-left"}`} style={{ color: "var(--color-ink-3)" }}>{heading}</th>)}
+        </tr></thead><tbody>
+          {team.map((member, index) => {
+            const canRemove = !member.isYou && member.role !== "admin";
+            return <tr key={`${member.status}-${member.id}`} style={{ borderBottom: index < team.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
+              <td className="px-5 py-3.5"><p className="font-medium">{member.name}{member.isYou && <span className="ml-2 text-xs" style={{ color: "var(--color-ink-3)" }}>(คุณ)</span>}</p><p className="text-xs" style={{ color: "var(--color-ink-3)" }}>{member.email}</p></td>
+              <td className="px-5 py-3.5"><span className="text-xs" style={{ color: member.status === "active" ? "#166534" : "#92400E" }}>{member.status === "active" ? "ใช้งานแล้ว" : "รอล็อกอินครั้งแรก"}</span></td>
+              <td className="px-5 py-3.5">
+                <div className="relative inline-block">
+                  <select
+                    aria-label={`Role ของ ${member.email}`}
+                    value={member.role}
+                    onChange={(event) => void changeRole(member, event.target.value as WorkspaceRole)}
+                    disabled={member.isYou}
+                    className="appearance-none rounded-full pl-3.5 pr-8 py-1.5 text-xs font-medium outline-none"
+                    style={{ backgroundColor: ROLE_META[member.role].bg, color: ROLE_META[member.role].color, border: "none", cursor: member.isYou ? "not-allowed" : "pointer" }}
+                  >
+                    {(Object.keys(ROLE_META) as WorkspaceRole[]).map((item) => <option key={item} value={item}>{ROLE_META[item].label}</option>)}
+                  </select>
+                  <svg className="pointer-events-none absolute" style={{ right: "10px", top: "50%", transform: "translateY(-50%)" }} width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M2 3.5L5 6.5L8 3.5" stroke={ROLE_META[member.role].color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </td>
+              <td className="px-5 py-3.5 text-right">
+                {canRemove && <button onClick={() => void removeMember(member)} aria-label={`ลบ ${member.name}`} className="text-xs font-medium rounded-full px-3 py-1.5" style={{ color: "#991B1B", backgroundColor: "transparent", border: "1px solid var(--color-rule)", cursor: "pointer" }}>ลบ</button>}
+              </td>
+            </tr>;
+          })}
         </tbody></table></div>}
       </SectionCard> : <SectionCard><div className="px-6 py-5"><p className="text-sm font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>สิทธิ์สมาชิก</p><p className="text-sm mt-2" style={{ color: "var(--color-ink-2)" }}>เฉพาะ Admin เท่านั้นที่เพิ่มสมาชิกและกำหนด Role ได้</p></div></SectionCard>}
 

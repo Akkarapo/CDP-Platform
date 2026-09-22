@@ -72,7 +72,8 @@ const NAV = [
 
 export default function AppLayout() {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, canEditCampaigns, signOut } = useAuth();
+  const nav = NAV.filter((item) => canEditCampaigns || (item.path !== "/import" && item.path !== "/campaigns"));
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: "var(--color-ground)", fontFamily: "var(--font-sans)" }}>
@@ -106,7 +107,7 @@ export default function AppLayout() {
 
         {/* Nav items */}
         <nav className="flex-1 px-3 py-4 space-y-0.5">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
