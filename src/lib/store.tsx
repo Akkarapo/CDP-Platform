@@ -1,15 +1,22 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fetchCsv, parseCsv } from "./csv";
 import { buildCustomers, buildProductStats } from "./analytics";
+import { MOCK_POS_KEY, MOCK_POS_ENDPOINT, MOCK_POS_TX_PREFIX, MOCK_POS_CUSTOMER_PREFIX, POS_TICK_MS, generatePosTick } from "./posSimulator";
 import type { RawCustomer, RawTransaction, Customer, CampaignRecord, ImportLogEntry } from "./types";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
+
+const SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 182;
 
 const LS_KEYS = {
   extraCustomers: "cdp.extraCustomers",
   extraTransactions: "cdp.extraTransactions",
   importLog: "cdp.importLog",
+  pointsOverrides: "cdp.pointsOverrides",
+  posConnected: "cdp.posConnected",
 };
+
+interface PointsSnapshot { points: number; asOf: string }
 
 function loadLS<T>(key: string, fallback: T): T {
   try {
@@ -84,10 +91,27 @@ function splitEventLog(rows: Record<string, string>[], existingCustomerIds: Set<
   return { customers, transactions };
 }
 
+// POS exports carry a running points_balance snapshot on every row for a
+// member; the highest event_datetime in the file is that customer's current
+// balance as of this import.
+function latestPointsFromRows(rows: Record<string, string>[]): Map<string, PointsSnapshot> {
+  const map = new Map<string, PointsSnapshot>();
+  for (const r of rows) {
+    if (!r.customer_id || !r.points_balance) continue;
+    const points = Number(r.points_balance);
+    if (Number.isNaN(points)) continue;
+    const asOf = r.event_datetime || "";
+    const existing = map.get(r.customer_id);
+    if (!existing || asOf >= existing.asOf) map.set(r.customer_id, { points, asOf });
+  }
+  return map;
+}
+
 interface DataContextValue {
   loading: boolean;
   error: string | null;
   customers: Customer[];
+  rawCustomers: RawCustomer[];
   rawTransactions: RawTransaction[];
   productStats: ReturnType<typeof buildProductStats>;
   campaigns: CampaignRecord[];
@@ -97,7 +121,14 @@ interface DataContextValue {
   importCsvFile: (fileName: string, text: string) => { ok: boolean; message: string; preview: Record<string, string>[] };
   removeImport: (id: string) => void;
   clearAllImports: () => void;
+  posConnected: boolean;
+  connectPos: (key: string, endpoint: string) => boolean;
+  resetPos: () => void;
 }
+
+// Re-exported so callers (Settings' connect-form hint, etc.) don't need to
+// import from posSimulator directly.
+export { MOCK_POS_KEY, MOCK_POS_ENDPOINT, MOCK_POS_TX_PREFIX, MOCK_POS_CUSTOMER_PREFIX };
 
 const DataContext = createContext<DataContextValue | null>(null);
 
@@ -111,6 +142,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [extraTransactions, setExtraTransactions] = useState<RawTransaction[]>(() => loadLS(LS_KEYS.extraTransactions, []));
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>([]);
   const [importLog, setImportLog] = useState<ImportLogEntry[]>(() => loadLS(LS_KEYS.importLog, []));
+  // Points balances that later imports overwrote for customers already on
+  // file (base or extra) — applied on top of their record's points_balance.
+  const [pointsOverrides, setPointsOverrides] = useState<Record<string, PointsSnapshot>>(() => loadLS(LS_KEYS.pointsOverrides, {}));
 
   useEffect(() => {
     Promise.all([fetchCsv("/data/customers.csv"), fetchCsv("/data/transactions.csv")])
@@ -155,7 +189,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
-  const allCustomersRaw = useMemo(() => [...baseCustomers, ...extraCustomers], [baseCustomers, extraCustomers]);
+  const allCustomersRaw = useMemo(() => {
+    const merged = [...baseCustomers, ...extraCustomers];
+    if (Object.keys(pointsOverrides).length === 0) return merged;
+    return merged.map((c) => {
+      const override = pointsOverrides[c.customer_id];
+      return override ? { ...c, points_balance: String(override.points) } : c;
+    });
+  }, [baseCustomers, extraCustomers, pointsOverrides]);
   const allTransactionsRaw = useMemo(() => [...baseTransactions, ...extraTransactions], [baseTransactions, extraTransactions]);
 
   const customers = useMemo(
@@ -163,6 +204,61 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [allCustomersRaw, allTransactionsRaw, campaigns]
   );
   const productStats = useMemo(() => buildProductStats(allTransactionsRaw), [allTransactionsRaw]);
+
+  // POS API simulator — lives here (not on the Settings page) so it keeps
+  // ticking no matter which route is mounted, and every page sees new mock
+  // transactions/customers show up live.
+  const [posConnected, setPosConnected] = useState(() => loadLS(LS_KEYS.posConnected, false));
+  const simRef = useRef({ customers, allCustomersRaw, allTransactionsRaw });
+  simRef.current = { customers, allCustomersRaw, allTransactionsRaw };
+
+  useEffect(() => {
+    if (!posConnected) return;
+    const interval = setInterval(() => {
+      const { customers: cs, allCustomersRaw: acr, allTransactionsRaw: atr } = simRef.current;
+      const result = generatePosTick(cs, acr, atr);
+      if (!result) return;
+      if (result.customer) {
+        setExtraCustomers((prev) => {
+          const next = [...prev, result.customer!];
+          saveLS(LS_KEYS.extraCustomers, next);
+          return next;
+        });
+      }
+      setExtraTransactions((prev) => {
+        const next = [...prev, result.transaction];
+        saveLS(LS_KEYS.extraTransactions, next);
+        return next;
+      });
+    }, POS_TICK_MS);
+    return () => clearInterval(interval);
+  }, [posConnected]);
+
+  function connectPos(key: string, endpoint: string): boolean {
+    if (key.trim() !== MOCK_POS_KEY || endpoint.trim() !== MOCK_POS_ENDPOINT) return false;
+    localStorage.setItem("cdp.posKey", key);
+    localStorage.setItem("cdp.posEndpoint", endpoint);
+    saveLS(LS_KEYS.posConnected, true);
+    setPosConnected(true);
+    return true;
+  }
+
+  function resetPos() {
+    setPosConnected(false);
+    saveLS(LS_KEYS.posConnected, false);
+    localStorage.removeItem("cdp.posKey");
+    localStorage.removeItem("cdp.posEndpoint");
+    setExtraTransactions((prev) => {
+      const next = prev.filter((t) => !t.transaction_id.startsWith(MOCK_POS_TX_PREFIX));
+      saveLS(LS_KEYS.extraTransactions, next);
+      return next;
+    });
+    setExtraCustomers((prev) => {
+      const next = prev.filter((c) => !c.customer_id.startsWith(MOCK_POS_CUSTOMER_PREFIX));
+      saveLS(LS_KEYS.extraCustomers, next);
+      return next;
+    });
+  }
 
   async function addCampaign(c: Omit<CampaignRecord, "id" | "createdAt">) {
     const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -219,6 +315,34 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Re-uploading a file (e.g. after retrying a failed import) must not
       // double-count transactions already in the system.
       const newTransactions = allNewTransactions.filter((t) => !existingTransactionIds.has(t.transaction_id));
+
+      // Reconcile points_balance against this file's most recent snapshot
+      // per customer — for brand-new members that's just their starting
+      // balance; for customers already on file it's an update to apply on
+      // top of their existing record.
+      const latestPoints = latestPointsFromRows(rows);
+      const newCustomerIds = new Set(newCustomers.map((c) => c.customer_id));
+      for (const c of newCustomers) {
+        const latest = latestPoints.get(c.customer_id);
+        if (latest) c.points_balance = String(latest.points);
+      }
+      const pointsChanges: Record<string, PointsSnapshot | null> = {};
+      const overrideUpdates: Record<string, PointsSnapshot> = {};
+      for (const [customerId, latest] of latestPoints) {
+        if (newCustomerIds.has(customerId)) continue;
+        const current = pointsOverrides[customerId];
+        if (current && current.asOf >= latest.asOf) continue;
+        pointsChanges[customerId] = current ?? null;
+        overrideUpdates[customerId] = latest;
+      }
+
+      if (Object.keys(overrideUpdates).length > 0) {
+        setPointsOverrides((prev) => {
+          const next = { ...prev, ...overrideUpdates };
+          saveLS(LS_KEYS.pointsOverrides, next);
+          return next;
+        });
+      }
       setExtraCustomers((prev) => {
         const next = [...prev, ...newCustomers];
         saveLS(LS_KEYS.extraCustomers, next);
@@ -238,15 +362,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
         fileName,
         customerIds: newCustomers.map((c) => c.customer_id),
         transactionIds: newTransactions.map((t) => t.transaction_id),
+        pointsChanges: Object.keys(pointsChanges).length > 0 ? pointsChanges : undefined,
       };
       setImportLog((prev) => {
         const next = [entry, ...prev];
         saveLS(LS_KEYS.importLog, next);
         return next;
       });
+      const updatedPoints = Object.keys(overrideUpdates).length;
       return {
         ok: true,
-        message: `นำเข้าแล้ว ${newCustomers.length} ลูกค้าใหม่ และ ${newTransactions.length} ธุรกรรมจากไฟล์ "${fileName}"`,
+        message: `นำเข้าแล้ว ${newCustomers.length} ลูกค้าใหม่, ${newTransactions.length} ธุรกรรม`
+          + (updatedPoints > 0 ? ` และอัปเดตแต้มสะสม ${updatedPoints} ราย` : "")
+          + ` จากไฟล์ "${fileName}"`,
         preview: rows.slice(0, 5),
       };
     } else if (isTransactions) {
@@ -340,6 +468,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return next;
       });
     }
+    if (target.pointsChanges) {
+      setPointsOverrides((prev) => {
+        const next = { ...prev };
+        for (const [customerId, prior] of Object.entries(target.pointsChanges!)) {
+          if (prior) next[customerId] = prior;
+          else delete next[customerId];
+        }
+        saveLS(LS_KEYS.pointsOverrides, next);
+        return next;
+      });
+    }
     setImportLog((prev) => {
       const next = prev.filter((e) => e.id !== id);
       saveLS(LS_KEYS.importLog, next);
@@ -356,6 +495,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       saveLS(LS_KEYS.extraTransactions, []);
       return [];
     });
+    setPointsOverrides(() => {
+      saveLS(LS_KEYS.pointsOverrides, {});
+      return {};
+    });
     setImportLog(() => {
       saveLS(LS_KEYS.importLog, []);
       return [];
@@ -366,6 +509,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     customers,
+    rawCustomers: allCustomersRaw,
     rawTransactions: allTransactionsRaw,
     productStats,
     campaigns,
@@ -375,6 +519,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     importCsvFile,
     removeImport,
     clearAllImports,
+    posConnected,
+    connectPos,
+    resetPos,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
@@ -384,4 +531,19 @@ export function useData() {
   const ctx = useContext(DataContext);
   if (!ctx) throw new Error("useData must be used within DataProvider");
   return ctx;
+}
+
+// Customer history isn't stored anywhere, so "6 months ago" is reconstructed
+// by re-running the same RFM/segmentation logic against the customer roster
+// and transactions as they stood as of that cutoff date.
+export function usePastCustomer(customerId: string): Customer | null {
+  const { rawCustomers, rawTransactions } = useData();
+  return useMemo(() => {
+    const cutoff = new Date(Date.now() - SIX_MONTHS_MS);
+    const pastRoster = rawCustomers.filter((c) => new Date(c.register_date) <= cutoff);
+    if (!pastRoster.some((c) => c.customer_id === customerId)) return null;
+    const pastTransactions = rawTransactions.filter((t) => new Date(t.purchase_datetime) <= cutoff);
+    const built = buildCustomers(pastRoster, pastTransactions, [], cutoff);
+    return built.find((c) => c.id === customerId) ?? null;
+  }, [customerId, rawCustomers, rawTransactions]);
 }

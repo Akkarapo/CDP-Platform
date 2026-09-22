@@ -3,8 +3,10 @@ import { useNavigate } from "react-router";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
-import { useData } from "../lib/store";
+import { useData, usePastCustomer } from "../lib/store";
+import { classifyRfmCell, recommendGoalCell } from "../lib/analytics";
 import type { Customer, Segment, ChurnRisk } from "../lib/types";
+import type { RfmCell } from "../lib/analytics";
 
 const SEGMENT_META: Record<Segment, { bg: string; color: string }> = {
   Premium: { bg: "#1A1917", color: "#ffffff" },
@@ -19,10 +21,10 @@ const CHURN_META: Record<ChurnRisk, { bg: string; color: string; label: string }
   High: { bg: "#FEE2E2", color: "#991B1B", label: "ความเสี่ยงสูง" },
 };
 
-const RFM_COLOR: Record<number, string> = {
-  1: "#D1D5DB", 2: "#C4B5A5", 3: "#B8A292", 4: "#A48E7F",
-  5: "#927B6D", 6: "#7E685C", 7: "#6B564C", 8: "#52433B",
-  9: "#3A302B", 10: "#1A1917",
+const RFM_TIER_META: Record<RfmCell["tier"], { bg: string; color: string }> = {
+  good: { bg: "#DCFCE7", color: "#166534" },
+  watch: { bg: "#FEF3C7", color: "#92400E" },
+  risk: { bg: "#FEE2E2", color: "#991B1B" },
 };
 
 function Badge({ label, bg, color }: { label: string; bg: string; color: string }) {
@@ -30,17 +32,6 @@ function Badge({ label, bg, color }: { label: string; bg: string; color: string 
     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: bg, color }}>
       {label}
     </span>
-  );
-}
-
-function RfmDot({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-semibold" style={{ backgroundColor: RFM_COLOR[value] ?? "#D1D5DB", color: value >= 6 ? "#fff" : "var(--color-ink)" }}>
-        {value}
-      </div>
-      <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>{label}</span>
-    </div>
   );
 }
 
@@ -65,6 +56,10 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
   const churn = CHURN_META[customer.churnRisk];
   const seg = SEGMENT_META[customer.segment];
   const receivedCampaigns = campaigns.filter((c) => c.targetSegment === customer.segment || c.targetSegment === "ทุก Segment");
+  const pastCustomer = usePastCustomer(customer.id);
+  const currentCell = classifyRfmCell(customer.rfm.recency, customer.rfm.frequency, customer.rfm.monetary);
+  const pastCell = pastCustomer ? classifyRfmCell(pastCustomer.rfm.recency, pastCustomer.rfm.frequency, pastCustomer.rfm.monetary) : null;
+  const goalCell = recommendGoalCell(currentCell, customer.churnRisk);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -94,10 +89,14 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl p-4" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
               <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ยอดซื้อสะสม</p>
               <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>฿{customer.totalSpend.toLocaleString("th-TH")}</p>
+            </div>
+            <div className="rounded-xl p-4" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+              <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>แต้มสะสม</p>
+              <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>{customer.pointsBalance.toLocaleString("th-TH")}</p>
             </div>
             <div className="rounded-xl p-4" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
               <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ซื้อล่าสุด</p>
@@ -106,11 +105,56 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
           </div>
 
           <div>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--color-ink-3)" }}>เส้นทางกลุ่มลูกค้า</p>
+            <div className="flex items-start justify-between">
+              {[
+                { label: "6 เดือนก่อน", cell: pastCell },
+                { label: "ปัจจุบัน", cell: currentCell as RfmCell | null },
+                { label: "เป้าหมายที่แนะนำ", cell: goalCell as RfmCell | null },
+              ].map((step, i, arr) => {
+                const meta = step.cell ? RFM_TIER_META[step.cell.tier] : null;
+                return (
+                  <div key={step.label} className="flex items-start" style={{ flex: i < arr.length - 1 ? 1 : "0 0 auto" }}>
+                    <div className="flex flex-col items-center gap-1.5 flex-shrink-0" style={{ width: 84 }}>
+                      <div
+                        className="w-20 h-20 rounded-full flex items-center justify-center text-[10px] font-semibold text-center leading-tight px-1.5"
+                        style={{ backgroundColor: meta ? meta.bg : "#F3F4F6", color: meta ? meta.color : "var(--color-ink-3)", border: "1px solid var(--color-rule)" }}
+                      >
+                        {step.cell?.label ?? "ไม่มีข้อมูล"}
+                      </div>
+                      <span className="text-[11px] text-center" style={{ color: "var(--color-ink-3)" }}>{step.label}</span>
+                    </div>
+                    {i < arr.length - 1 && (
+                      <div className="flex items-center flex-1 mx-1.5" style={{ marginTop: 35 }}>
+                        <div className="flex-1" style={{ height: 1.5, backgroundColor: "var(--color-rule)" }} />
+                        <svg width="8" height="10" viewBox="0 0 8 10" fill="none" className="flex-shrink-0" style={{ color: "var(--color-ink-3)" }}>
+                          <path d="M0 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] mt-2.5" style={{ color: "var(--color-ink-3)" }}>
+              "เป้าหมายที่แนะนำ" คือกลุ่ม RFM ที่ควรผลักดันลูกค้าไปให้ถึงจากสถานะปัจจุบัน (ดึงกลับ / รักษาฐาน / เพิ่มยอดขาย) ไม่ใช่การพยากรณ์
+            </p>
+          </div>
+
+          <div>
             <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--color-ink-3)" }}>RFM Score (จากข้อมูลจริง)</p>
-            <div className="flex gap-4">
-              <RfmDot value={customer.rfm.recency} label="Recency" />
-              <RfmDot value={customer.rfm.frequency} label="Frequency" />
-              <RfmDot value={customer.rfm.monetary} label="Monetary" />
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Recency", value: `${customer.recencyDays.toLocaleString("th-TH")} วันก่อน`, point: customer.rfm.recency },
+                { label: "Frequency", value: `${customer.orderCount.toLocaleString("th-TH")} ครั้ง`, point: customer.rfm.frequency },
+                { label: "Monetary", value: `฿${customer.totalSpend.toLocaleString("th-TH")}`, point: customer.rfm.monetary },
+              ].map(({ label, value, point }) => (
+                <div key={label} className="rounded-xl p-3.5" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>{label}</p>
+                  <p className="text-base font-semibold tabular-nums leading-tight whitespace-nowrap" style={{ color: "var(--color-ink)" }}>{value}</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--color-ink-3)" }}>Point {point}/10</p>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -333,8 +377,8 @@ export default function Customers() {
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 160 }}>ติดต่อ</th>
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 96 }}>Segment</th>
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 108 }}>Churn risk</th>
-              <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-right" style={{ color: "var(--color-ink-3)", width: 108 }}>ยอดซื้อสะสม</th>
-              <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-right" style={{ color: "var(--color-ink-3)", width: 96 }}>ซื้อล่าสุด</th>
+              <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 108 }}>ยอดซื้อสะสม</th>
+              <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left whitespace-nowrap" style={{ color: "var(--color-ink-3)", width: 112 }}>ซื้อล่าสุด</th>
             </tr>
           </thead>
           <tbody>
@@ -366,8 +410,8 @@ export default function Customers() {
                       {churn.label.replace("ความเสี่ยง", "")}
                     </span>
                   </td>
-                  <td className="px-3 py-3.5 text-right font-semibold tabular-nums text-sm" style={{ color: "var(--color-ink)" }}>฿{c.totalSpend.toLocaleString("th-TH")}</td>
-                  <td className="px-3 py-3.5 text-right text-xs" style={{ color: "var(--color-ink-2)" }}>{c.lastPurchaseLabel}</td>
+                  <td className="px-3 py-3.5 text-left font-semibold tabular-nums text-sm" style={{ color: "var(--color-ink)" }}>฿{c.totalSpend.toLocaleString("th-TH")}</td>
+                  <td className="px-3 py-3.5 text-left text-xs whitespace-nowrap" style={{ color: "var(--color-ink-2)" }}>{c.lastPurchaseLabel}</td>
                 </tr>
               );
             })}

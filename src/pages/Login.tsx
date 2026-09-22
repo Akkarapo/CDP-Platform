@@ -4,7 +4,7 @@ import { useAuth, GoogleSignInButton } from "../lib/auth";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, ready, error, clientIdConfigured } = useAuth();
+  const { user, googleReady, error, clientIdConfigured } = useAuth();
 
   useEffect(() => {
     if (user) navigate("/dashboard");
@@ -55,7 +55,7 @@ export default function Login() {
 
           {clientIdConfigured ? (
             <div className="space-y-3">
-              {!ready && (
+              {!googleReady && (
                 <p className="text-sm text-center" style={{ color: "var(--color-ink-3)" }}>
                   กำลังโหลด Google Sign-In…
                 </p>

@@ -18,12 +18,6 @@ const CHURN_META: Record<ChurnRisk, { bg: string; color: string; label: string }
   High: { bg: "#FEE2E2", color: "#991B1B", label: "ความเสี่ยงสูง" },
 };
 
-const RFM_COLOR: Record<number, string> = {
-  1: "#D1D5DB", 2: "#C4B5A5", 3: "#B8A292", 4: "#A48E7F",
-  5: "#927B6D", 6: "#7E685C", 7: "#6B564C", 8: "#52433B",
-  9: "#3A302B", 10: "#1A1917",
-};
-
 // Authored playbook copy per segment — this is business strategy text, not
 // something derivable from the CSVs, so it stays as static content.
 const STRATEGY: Record<Segment, { text: string; promos: string[] }> = {
@@ -69,10 +63,14 @@ function MiniDrawer({ customer, onClose }: { customer: Customer; onClose: () => 
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl p-3.5" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
               <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ยอดซื้อสะสม</p>
               <p className="text-lg font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>฿{customer.totalSpend.toLocaleString("th-TH")}</p>
+            </div>
+            <div className="rounded-xl p-3.5" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+              <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>แต้มสะสม</p>
+              <p className="text-lg font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>{customer.pointsBalance.toLocaleString("th-TH")}</p>
             </div>
             <div className="rounded-xl p-3.5" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
               <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ซื้อล่าสุด</p>
@@ -81,11 +79,16 @@ function MiniDrawer({ customer, onClose }: { customer: Customer; onClose: () => 
           </div>
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--color-ink-3)" }}>RFM Score</p>
-            <div className="flex gap-3">
-              {[{ v: customer.rfm.recency, l: "Recency" }, { v: customer.rfm.frequency, l: "Frequency" }, { v: customer.rfm.monetary, l: "Monetary" }].map(({ v, l }) => (
-                <div key={l} className="flex flex-col items-center gap-1">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-semibold" style={{ backgroundColor: RFM_COLOR[v] ?? "#D1D5DB", color: v >= 6 ? "#fff" : "var(--color-ink)" }}>{v}</div>
-                  <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>{l}</span>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { v: customer.rfm.recency, l: "Recency", real: `${customer.recencyDays.toLocaleString("th-TH")} วันก่อน` },
+                { v: customer.rfm.frequency, l: "Frequency", real: `${customer.orderCount.toLocaleString("th-TH")} ครั้ง` },
+                { v: customer.rfm.monetary, l: "Monetary", real: `฿${customer.totalSpend.toLocaleString("th-TH")}` },
+              ].map(({ v, l, real }) => (
+                <div key={l} className="rounded-xl p-3.5" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
+                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>{l}</p>
+                  <p className="text-base font-semibold tabular-nums leading-tight whitespace-nowrap" style={{ color: "var(--color-ink)" }}>{real}</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--color-ink-3)" }}>Point {v}/10</p>
                 </div>
               ))}
             </div>
@@ -121,9 +124,6 @@ export default function SegmentProfile() {
     return <main className="max-w-5xl mx-auto px-6 py-8"><p style={{ color: "var(--color-ink-3)" }}>ไม่พบข้อมูลกลุ่มนี้</p></main>;
   }
 
-  const avgR = members.length ? Math.round(members.reduce((s, c) => s + c.rfm.recency, 0) / members.length) : 0;
-  const avgF = members.length ? Math.round(members.reduce((s, c) => s + c.rfm.frequency, 0) / members.length) : 0;
-  const avgM = members.length ? Math.round(members.reduce((s, c) => s + c.rfm.monetary, 0) / members.length) : 0;
   const totalRevenue = members.reduce((s, c) => s + c.totalSpend, 0);
   const totalOrders = members.reduce((s, c) => s + c.orderCount, 0);
   const aov = totalOrders > 0 ? totalRevenue / totalOrders : 0;
@@ -159,21 +159,10 @@ export default function SegmentProfile() {
           </button>}
         </div>
 
-        <div className="grid grid-cols-5 gap-3">
-          <div className="rounded-2xl p-4 col-span-2" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)" }}>
-            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าในกลุ่ม</p>
-            <p className="text-3xl font-semibold tabular-nums" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{members.length.toLocaleString("th-TH")}</p>
-            <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>คิดเป็น <span className="font-semibold" style={{ color: "var(--color-ink)" }}>{pctOfAll}%</span> ของลูกค้าทั้งหมด</p>
-          </div>
-          {[{ label: "Recency", value: avgR }, { label: "Frequency", value: avgF }, { label: "Monetary", value: avgM }].map(({ label, value }) => (
-            <div key={label} className="rounded-2xl p-4 flex flex-col justify-between" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)" }}>
-              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>{label}</p>
-              <div className="flex items-end gap-2">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-semibold" style={{ backgroundColor: RFM_COLOR[value] ?? "#D1D5DB", color: value >= 6 ? "#fff" : "var(--color-ink)" }}>{value}</div>
-                <span className="text-xs pb-1" style={{ color: "var(--color-ink-3)" }}>คะแนนเฉลี่ย</span>
-              </div>
-            </div>
-          ))}
+        <div className="rounded-2xl p-4" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)" }}>
+          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าในกลุ่ม</p>
+          <p className="text-3xl font-semibold tabular-nums" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{members.length.toLocaleString("th-TH")}</p>
+          <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>คิดเป็น <span className="font-semibold" style={{ color: "var(--color-ink)" }}>{pctOfAll}%</span> ของลูกค้าทั้งหมด</p>
         </div>
       </div>
 
@@ -314,7 +303,7 @@ export default function SegmentProfile() {
                       <div className="text-xs" style={{ color: "var(--color-ink-3)" }}>{c.email}</div>
                     </td>
                     <td className="px-4 py-3.5 font-semibold tabular-nums text-sm" style={{ color: "var(--color-ink)" }}>฿{c.totalSpend.toLocaleString("th-TH")}</td>
-                    <td className="px-4 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{c.lastPurchaseLabel}</td>
+                    <td className="px-4 py-3.5 text-xs whitespace-nowrap" style={{ color: "var(--color-ink-2)" }}>{c.lastPurchaseLabel}</td>
                     <td className="px-4 py-3.5">
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: churn.bg, color: churn.color }}>
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: churn.color }} />{churn.label.replace("ความเสี่ยง", "")}

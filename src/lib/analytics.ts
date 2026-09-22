@@ -111,8 +111,10 @@ export function buildCustomers(
       segment,
       totalSpend: monetary,
       orderCount: frequency,
+      pointsBalance: Number(c.points_balance) || 0,
       lastPurchaseDate,
       lastPurchaseLabel: lastPurchaseDate ? thaiDate(lastPurchaseDate) : "ยังไม่เคยซื้อ",
+      recencyDays,
       rfm: { recency, frequency: freqScore, monetary: monetaryScore },
       churnRisk,
       purchaseHistory,
@@ -154,6 +156,25 @@ function rfmBand(score: number): 0 | 1 | 2 {
 export function classifyRfmCell(recency: number, frequency: number, monetary: number): RfmCell {
   const rBand = rfmBand(recency);
   const fmBand = rfmBand((frequency + monetary) / 2);
+  return RFM_MATRIX.find((c) => c.rBand === rBand && c.fmBand === fmBand)!;
+}
+
+// Not a forecast — the RFM cell a marketer should aim to move this customer
+// into from where they stand today. Anyone not already "good" (or at high
+// churn risk) gets a re-engagement goal (recency up one band); "good"
+// customers get an upsell goal (frequency/monetary up one band, or recency
+// once F&M are already maxed). A customer already at the ceiling on both
+// axes stays put — the goal there is retention, not further movement.
+export function recommendGoalCell(current: RfmCell, churnRisk: ChurnRisk): RfmCell {
+  let { rBand, fmBand } = current;
+  if (current.tier !== "good" || churnRisk === "High") {
+    rBand = Math.min(2, rBand + 1) as 0 | 1 | 2;
+  } else if (fmBand < 2) {
+    fmBand = (fmBand + 1) as 0 | 1 | 2;
+  } else {
+    rBand = Math.min(2, rBand + 1) as 0 | 1 | 2;
+  }
+  if (rBand === current.rBand && fmBand === current.fmBand) return current;
   return RFM_MATRIX.find((c) => c.rBand === rBand && c.fmBand === fmBand)!;
 }
 

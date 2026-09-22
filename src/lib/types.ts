@@ -48,8 +48,10 @@ export interface Customer {
   segment: Segment;
   totalSpend: number;
   orderCount: number;
+  pointsBalance: number;
   lastPurchaseDate: Date | null;
   lastPurchaseLabel: string;
+  recencyDays: number;
   rfm: { recency: number; frequency: number; monetary: number };
   churnRisk: ChurnRisk;
   purchaseHistory: { month: string; amount: number }[];
@@ -64,6 +66,11 @@ export interface CampaignRecord {
   status: "pending" | "approved" | "sent";
   message: string;
   createdAt: string;
+  // Optional finer-grained targeting, added alongside targetSegment — absent
+  // on campaigns saved before this field existed.
+  churnFilterLabel?: string;
+  rfmFilterLabel?: string;
+  prompt?: string;
 }
 
 export interface ImportLogEntry {
@@ -78,4 +85,7 @@ export interface ImportLogEntry {
   // logged before this field existed.
   customerIds?: string[];
   transactionIds?: string[];
+  // Per-customer points_balance this import overwrote, keyed by customer_id,
+  // so removeImport can restore the prior value (null = there was none).
+  pointsChanges?: Record<string, { points: number; asOf: string } | null>;
 }

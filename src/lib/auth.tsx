@@ -39,7 +39,13 @@ interface AuthContextValue {
   role: WorkspaceRole | null;
   canManageMembers: boolean;
   canEditCampaigns: boolean;
+  // `ready`: the Supabase session restore has finished (resolves fast).
+  // `googleReady`: the Google Identity Services script has loaded and
+  // `initialize()` has run — this is what actually gates whether
+  // `renderButton` can draw anything. They finish independently, so the
+  // sign-in button must key off `googleReady`, not `ready`.
   ready: boolean;
+  googleReady: boolean;
   error: string | null;
   clientIdConfigured: boolean;
   signOut: () => void;
@@ -150,6 +156,7 @@ export function AuthProvider({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [role, setRole] = useState<WorkspaceRole | null>(null);
   const [ready, setReady] = useState(false);
+  const [googleReady, setGoogleReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initialized = useRef(false);
 
@@ -188,7 +195,7 @@ export function AuthProvider({
 
       const stored = loadStoredUser();
       const metadata = data.user.user_metadata;
-      const restored: AuthUser = stored?.email === data.user.email
+      const restored: AuthUser = stored != null && stored.email === data.user.email
         ? stored
         : {
             sub: data.user.id,
@@ -285,6 +292,7 @@ export function AuthProvider({
         cancel_on_tap_outside: true,
       });
 
+      setGoogleReady(true);
     }
 
     const existing = document.getElementById(
@@ -360,6 +368,7 @@ export function AuthProvider({
         canManageMembers: role === "admin",
         canEditCampaigns: role === "admin" || role === "editor",
         ready,
+        googleReady,
         error,
         clientIdConfigured: Boolean(CLIENT_ID),
         signOut,
@@ -383,12 +392,12 @@ export function useAuth() {
 }
 
 export function GoogleSignInButton() {
-  const { ready, clientIdConfigured } = useAuth();
+  const { googleReady, clientIdConfigured } = useAuth();
   const divRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (
-      ready &&
+      googleReady &&
       clientIdConfigured &&
       divRef.current &&
       window.google
@@ -407,7 +416,7 @@ export function GoogleSignInButton() {
         }
       );
     }
-  }, [ready, clientIdConfigured]);
+  }, [googleReady, clientIdConfigured]);
 
   if (!clientIdConfigured) {
     return null;

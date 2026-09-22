@@ -1,12 +1,22 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { useData } from "../lib/store";
-import { buildProductStats } from "../lib/analytics";
-import type { Segment, CampaignRecord } from "../lib/types";
+import { buildProductStats, classifyRfmCell, RFM_MATRIX } from "../lib/analytics";
+import type { Segment, ChurnRisk, CampaignRecord } from "../lib/types";
 import { useAuth } from "../lib/auth";
 
 type Target = Segment | "ทุก Segment";
 const TARGETS: Target[] = ["Premium", "Regular", "New", "Dormant", "ทุก Segment"];
+
+type ChurnFilter = ChurnRisk | "ทุกระดับ";
+const CHURN_FILTERS: { value: ChurnFilter; label: string }[] = [
+  { value: "ทุกระดับ", label: "ทุกระดับ" },
+  { value: "High", label: "เสี่ยงสูง" },
+  { value: "Medium", label: "เสี่ยงปานกลาง" },
+  { value: "Low", label: "เสี่ยงต่ำ" },
+];
+
+type RfmFilter = string | "ทุกกลุ่ม";
 
 const STATUS_META: Record<CampaignRecord["status"], { label: string; bg: string; color: string }> = {
   pending: { label: "รออนุมัติ", bg: "#FEF3C7", color: "#92400E" },
@@ -44,42 +54,86 @@ function LineChatPreview({ message }: { message: string }) {
 function CreateTab({ preselected }: { preselected?: Segment }) {
   const { customers, rawTransactions, addCampaign } = useData();
   const [target, setTarget] = useState<Target | null>(preselected ?? null);
+  const [churnFilter, setChurnFilter] = useState<ChurnFilter>("ทุกระดับ");
+  const [rfmFilter, setRfmFilter] = useState<RfmFilter>("ทุกกลุ่ม");
   const [prompt, setPrompt] = useState("");
   const [generated, setGenerated] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const effectiveTarget = target ?? "ทุก Segment";
+
+  const countFor = (seg: Target, churn: ChurnFilter, rfm: RfmFilter) => customers.filter((c) => {
+    const matchesSegment = seg === "ทุก Segment" || c.segment === seg;
+    const matchesChurn = churn === "ทุกระดับ" || c.churnRisk === churn;
+    const matchesRfm = rfm === "ทุกกลุ่ม" || classifyRfmCell(c.rfm.recency, c.rfm.frequency, c.rfm.monetary).key === rfm;
+    return matchesSegment && matchesChurn && matchesRfm;
+  }).length;
+
+  const audience = useMemo(() => customers.filter((c) => {
+    const matchesSegment = !target || target === "ทุก Segment" || c.segment === target;
+    const matchesChurn = churnFilter === "ทุกระดับ" || c.churnRisk === churnFilter;
+    const matchesRfm = rfmFilter === "ทุกกลุ่ม" || classifyRfmCell(c.rfm.recency, c.rfm.frequency, c.rfm.monetary).key === rfmFilter;
+    return matchesSegment && matchesChurn && matchesRfm;
+  }), [customers, target, churnFilter, rfmFilter]);
+
   const suggestedProducts = useMemo(() => {
-    const members = target && target !== "ทุก Segment" ? customers.filter((c) => c.segment === target) : customers;
-    const memberIds = new Set(members.map((c) => c.id));
-    const segTx = rawTransactions.filter((t) => memberIds.has(t.customer_id));
-    return buildProductStats(segTx).topProducts.slice(0, 3).map((p) => p.name);
-  }, [target, customers, rawTransactions]);
+    const memberIds = new Set(audience.map((c) => c.id));
+    const audienceTx = rawTransactions.filter((t) => memberIds.has(t.customer_id));
+    return buildProductStats(audienceTx).topProducts.slice(0, 3).map((p) => p.name);
+  }, [audience, rawTransactions]);
 
-  const targetCount = target === "ทุก Segment" || !target
-    ? customers.length
-    : customers.filter((c) => c.segment === target).length;
+  const targetCount = audience.length;
+  const churnLabel = CHURN_FILTERS.find((f) => f.value === churnFilter)?.label ?? "ทุกระดับ";
+  const rfmCell = rfmFilter === "ทุกกลุ่ม" ? null : RFM_MATRIX.find((c) => c.key === rfmFilter) ?? null;
+  const rfmLabel = rfmCell?.label ?? "ทุกกลุ่ม RFM";
 
-  // Template-based message generator: fills in the real target-segment
-  // product data into a message template. ponytail: not a real LLM call
-  // (that needs a backend + API key this static SPA doesn't have) — swap
-  // for a real generation API if a backend gets added.
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!prompt.trim() || !target) return;
-    const productLine = suggestedProducts.length ? `แนะนำ: ${suggestedProducts.join(", ")}` : "";
-    setGenerated(
-      `สวัสดีค่ะ 👋\n\n${prompt.trim()}\n\n${productLine}\n\nกลุ่มเป้าหมาย: ${target} (${targetCount.toLocaleString("th-TH")} คน)`
-    );
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/generate-campaign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          segmentLabel: target,
+          churnLabel,
+          rfmCellLabel: rfmLabel,
+          rfmCellDescription: rfmCell?.description ?? "",
+          customerCount: targetCount,
+          topProducts: suggestedProducts,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "สร้างข้อความไม่สำเร็จ กรุณาลองใหม่");
+      setGenerated(data.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาดที่ไม่คาดคิด");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async () => {
     if (!target || !generated) return;
     setSubmitError(null);
     try {
-      await addCampaign({ name: prompt.slice(0, 40) || `แคมเปญสำหรับ ${target}`, targetSegment: target, status: "pending", message: generated });
+      await addCampaign({
+        name: prompt.slice(0, 40) || `แคมเปญสำหรับ ${target}`,
+        targetSegment: target,
+        status: "pending",
+        message: generated,
+        prompt: prompt.trim(),
+        churnFilterLabel: churnFilter === "ทุกระดับ" ? undefined : churnLabel,
+        rfmFilterLabel: rfmFilter === "ทุกกลุ่ม" ? undefined : rfmLabel,
+      });
       setSubmitted(true);
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "บันทึกแคมเปญไม่สำเร็จ");
+    } catch (submitErr) {
+      setSubmitError(submitErr instanceof Error ? submitErr.message : "บันทึกแคมเปญไม่สำเร็จ");
     }
   };
 
@@ -93,7 +147,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           <p className="text-base font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>บันทึกแคมเปญแล้ว</p>
           <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>ดูสถานะและอัปเดตได้ที่แท็บ "ประวัติแคมเปญ"</p>
         </div>
-        <button onClick={() => { setSubmitted(false); setTarget(null); setPrompt(""); setGenerated(""); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setGenerated(""); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
           สร้างแคมเปญใหม่
         </button>
       </div>
@@ -101,38 +155,80 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   }
 
   return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-8 items-start">
     <div className="space-y-6 max-w-2xl">
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>1</span>
           เลือกกลุ่มเป้าหมาย
         </p>
-        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าคำนวณจากข้อมูลจริงในไฟล์ CSV</p>
-        <div className="grid grid-cols-2 gap-2.5 ml-7">
-          {TARGETS.map((t) => {
-            const active = target === t;
-            const count = t === "ทุก Segment" ? customers.length : customers.filter((c) => c.segment === t).length;
-            return (
-              <button key={t} onClick={() => setTarget(t)} className="text-left rounded-xl px-4 py-3.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: "pointer" }}>
-                <p className="text-sm font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{t}</p>
-                <p className="text-xs mt-1.5 font-medium tabular-nums" style={{ color: active ? "rgba(255,255,255,0.9)" : "var(--color-ink-2)" }}>{count.toLocaleString("th-TH")} คน</p>
+        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าคำนวณจากข้อมูลจริงในไฟล์ CSV — เลือกได้หลายมิติร่วมกัน (ตัวเลือกที่ทำให้ไม่มีลูกค้าเหลือจะถูกปิดไว้)</p>
+
+        <div className="ml-7 space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>Segment</p>
+            <div className="grid grid-cols-3 gap-2">
+              {TARGETS.map((t) => {
+                const active = target === t;
+                const count = countFor(t, churnFilter, rfmFilter);
+                const disabled = count === 0 && t !== "ทุก Segment";
+                return (
+                  <button key={t} onClick={() => !disabled && setTarget(t)} disabled={disabled} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{t}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>Churn Risk</p>
+            <div className="grid grid-cols-4 gap-2">
+              {CHURN_FILTERS.map(({ value, label }) => {
+                const active = churnFilter === value;
+                const count = countFor(effectiveTarget, value, rfmFilter);
+                const disabled = count === 0 && value !== "ทุกระดับ";
+                return (
+                  <button key={value} onClick={() => !disabled && setChurnFilter(value)} disabled={disabled} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{label}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>กลุ่ม RFM</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setRfmFilter("ทุกกลุ่ม")} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: rfmFilter === "ทุกกลุ่ม" ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${rfmFilter === "ทุกกลุ่ม" ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: "pointer" }}>
+                <p className="text-xs font-semibold" style={{ color: rfmFilter === "ทุกกลุ่ม" ? "#fff" : "var(--color-ink)" }}>ทุกกลุ่ม RFM</p>
               </button>
-            );
-          })}
+              {RFM_MATRIX.map((cell) => {
+                const active = rfmFilter === cell.key;
+                const count = countFor(effectiveTarget, churnFilter, cell.key);
+                const disabled = count === 0;
+                return (
+                  <button key={cell.key} onClick={() => !disabled && setRfmFilter(cell.key)} disabled={disabled} title={cell.description} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{cell.label}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </section>
 
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>2</span>
-          ข้อความแคมเปญ
+          Prompt สำหรับ AI
         </p>
-        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>อธิบายสิ่งที่อยากสื่อสาร ระบบจะเติมสินค้าขายดีจริงของกลุ่มนี้ให้อัตโนมัติ</p>
+        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>บอกโจทย์แคมเปญที่ต้องการ AI จะคิดข้อความให้ตามกลุ่มเป้าหมาย (Segment / Churn / RFM) และสินค้าขายดีจริงของกลุ่มนี้</p>
         <div className="ml-7 space-y-2">
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="เช่น: เชิญลูกค้าเข้าร่วม Early Access สินค้าใหม่ พร้อมโค้ดส่วนลด 15%"
+            placeholder="เช่น: อยากดึงลูกค้ากลุ่มนี้กลับมาซื้อซ้ำ โดยเน้นสินค้าที่เขาเคยซื้อ ไม่ต้องลดราคาแรง"
             rows={3}
             className="w-full rounded-xl px-4 py-3 text-sm resize-none outline-none"
             style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)", lineHeight: 1.6 }}
@@ -140,17 +236,20 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           {target && suggestedProducts.length > 0 && (
             <div className="flex items-start gap-2.5 rounded-xl px-3.5 py-3" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)" }}>
               <div className="flex-1 min-w-0">
-                <p className="text-xs mb-1" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้ (จะแนบให้อัตโนมัติ): {suggestedProducts.join(", ")}</p>
+                <p className="text-xs mb-1" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้ (จะส่งให้ AI อ้างอิง): {suggestedProducts.join(", ")}</p>
               </div>
             </div>
           )}
+          {error && (
+            <p role="alert" className="text-xs leading-relaxed rounded-xl px-3.5 py-3" style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}>{error}</p>
+          )}
           <button
             onClick={handleGenerate}
-            disabled={!prompt.trim() || !target}
+            disabled={!prompt.trim() || !target || loading}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
-            style={{ backgroundColor: !prompt.trim() || !target ? "var(--color-ground)" : "var(--color-ink)", color: !prompt.trim() || !target ? "var(--color-ink-3)" : "#fff", border: "none", cursor: !prompt.trim() || !target ? "not-allowed" : "pointer" }}
+            style={{ backgroundColor: !prompt.trim() || !target || loading ? "var(--color-ground)" : "var(--color-ink)", color: !prompt.trim() || !target || loading ? "var(--color-ink-3)" : "#fff", border: "none", cursor: !prompt.trim() || !target || loading ? "not-allowed" : "pointer" }}
           >
-            สร้างข้อความ
+            {loading ? "กำลังสร้างด้วย AI…" : "สร้างแคมเปญด้วย AI"}
           </button>
         </div>
       </section>
@@ -163,7 +262,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
         <div className="ml-7">
           {generated ? <LineChatPreview message={generated} /> : (
             <div className="rounded-2xl flex items-center justify-center py-12" style={{ border: "1.5px dashed var(--color-rule)" }}>
-              <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>{target ? "กด \"สร้างข้อความ\"" : "เลือกกลุ่มเป้าหมายก่อน"}</p>
+              <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>{target ? "กด \"สร้างแคมเปญด้วย AI\"" : "เลือกกลุ่มเป้าหมายก่อน"}</p>
             </div>
           )}
         </div>
@@ -175,6 +274,34 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           บันทึกแคมเปญ
         </button>
       </div>
+    </div>
+
+    <aside className="lg:sticky lg:top-8">
+      <div className="rounded-2xl p-5" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ลูกค้าที่ตรงเงื่อนไขทั้งหมด</p>
+        <p className="text-4xl font-semibold tabular-nums mb-4" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{targetCount.toLocaleString("th-TH")} <span className="text-base font-normal" style={{ color: "var(--color-ink-3)" }}>คน</span></p>
+        <div className="space-y-2 pt-4" style={{ borderTop: "1px solid var(--color-rule)" }}>
+          <div className="flex items-center justify-between text-xs">
+            <span style={{ color: "var(--color-ink-3)" }}>Segment</span>
+            <span className="font-medium" style={{ color: "var(--color-ink)" }}>{effectiveTarget}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span style={{ color: "var(--color-ink-3)" }}>Churn Risk</span>
+            <span className="font-medium" style={{ color: "var(--color-ink)" }}>{churnLabel}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs gap-2">
+            <span style={{ color: "var(--color-ink-3)" }}>กลุ่ม RFM</span>
+            <span className="font-medium text-right" style={{ color: "var(--color-ink)" }}>{rfmLabel}</span>
+          </div>
+        </div>
+        {suggestedProducts.length > 0 && (
+          <div className="pt-4 mt-4" style={{ borderTop: "1px solid var(--color-rule)" }}>
+            <p className="text-xs mb-1.5" style={{ color: "var(--color-ink-3)" }}>สินค้าขายดีจริงของกลุ่มนี้</p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--color-ink)" }}>{suggestedProducts.join(", ")}</p>
+          </div>
+        )}
+      </div>
+    </aside>
     </div>
   );
 }
@@ -202,7 +329,12 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
             return (
               <tr key={c.id} style={{ borderBottom: i < campaigns.length - 1 ? "1px solid var(--color-rule)" : "none" }}>
                 <td className="px-4 py-3.5 font-medium" style={{ color: "var(--color-ink)" }}>{c.name}</td>
-                <td className="px-3 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{c.targetSegment}</td>
+                <td className="px-3 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>
+                  {c.targetSegment}
+                  {(c.churnFilterLabel || c.rfmFilterLabel) && (
+                    <span style={{ color: "var(--color-ink-3)" }}> · {[c.churnFilterLabel, c.rfmFilterLabel].filter(Boolean).join(" · ")}</span>
+                  )}
+                </td>
                 <td className="px-3 py-3.5">
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: s.bg, color: s.color }}>
                     <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />{s.label}
@@ -234,7 +366,7 @@ export default function Campaigns() {
   const [tab, setTab] = useState<"create" | "history">(canEditCampaigns ? "create" : "history");
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+    <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
       <div>
         <h1 className="text-xl font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>Campaigns</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--color-ink-3)" }}>สร้างและจัดการแคมเปญการตลาดจากข้อมูลลูกค้าจริง</p>
