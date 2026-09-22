@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { supabase } from "./supabase";
 
 export interface AuthUser {
   sub: string;
@@ -163,15 +164,47 @@ export function AuthProvider({
       window.google.accounts.id.initialize({
         client_id: CLIENT_ID,
 
-        callback: (response: { credential?: string }) => {
-          const googleUser = response.credential
-            ? decodeGoogleUser(response.credential)
-            : null;
+        callback: async (response: { credential?: string }) => {
+          if (!response.credential) {
+            setError("ไม่ได้รับข้อมูลยืนยันตัวตนจาก Google");
+            return;
+          }
+
+          const googleUser = decodeGoogleUser(response.credential);
 
           if (!googleUser) {
             setError(
               "Google ไม่สามารถยืนยันบัญชีนี้ได้ กรุณาลองเข้าสู่ระบบอีกครั้ง"
             );
+            return;
+          }
+
+          const { data: authData, error: signInError } =
+            await supabase.auth.signInWithIdToken({
+              provider: "google",
+              token: response.credential,
+            });
+
+          if (signInError || !authData.user) {
+            setError(
+              signInError?.message ??
+                "ไม่สามารถเข้าสู่ระบบ Supabase ได้"
+            );
+            return;
+          }
+
+          const { data: membership, error: membershipError } =
+            await supabase
+              .from("workspace_members")
+              .select("role")
+              .eq("user_id", authData.user.id)
+              .maybeSingle();
+
+          if (membershipError || !membership) {
+            await supabase.auth.signOut();
+            localStorage.removeItem(LS_KEY);
+            setUser(null);
+            setError("อีเมลนี้ยังไม่ได้รับเชิญให้เข้าใช้งานระบบ");
             return;
           }
 
@@ -248,6 +281,7 @@ export function AuthProvider({
   }, [user]);
 
   function signOut() {
+    void supabase.auth.signOut();
     setUser(null);
     setError(null);
     localStorage.removeItem(LS_KEY);
