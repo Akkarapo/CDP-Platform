@@ -3,6 +3,7 @@ import { useLocation } from "react-router";
 import { useData } from "../lib/store";
 import { buildProductStats } from "../lib/analytics";
 import type { Segment, CampaignRecord } from "../lib/types";
+import { useAuth } from "../lib/auth";
 
 type Target = Segment | "ทุก Segment";
 const TARGETS: Target[] = ["Premium", "Regular", "New", "Dormant", "ทุก Segment"];
@@ -46,6 +47,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   const [prompt, setPrompt] = useState("");
   const [generated, setGenerated] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const suggestedProducts = useMemo(() => {
     const members = target && target !== "ทุก Segment" ? customers.filter((c) => c.segment === target) : customers;
@@ -70,10 +72,15 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
     );
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!target || !generated) return;
-    addCampaign({ name: prompt.slice(0, 40) || `แคมเปญสำหรับ ${target}`, targetSegment: target, status: "pending", message: generated });
-    setSubmitted(true);
+    setSubmitError(null);
+    try {
+      await addCampaign({ name: prompt.slice(0, 40) || `แคมเปญสำหรับ ${target}`, targetSegment: target, status: "pending", message: generated });
+      setSubmitted(true);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "บันทึกแคมเปญไม่สำเร็จ");
+    }
   };
 
   if (submitted) {
@@ -163,6 +170,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
       </section>
 
       <div className="ml-7 pb-4">
+        {submitError && <p role="alert" className="text-xs mb-2" style={{ color: "#991B1B" }}>{submitError}</p>}
         <button onClick={handleSubmit} disabled={!generated} className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-2xl text-sm font-semibold" style={{ backgroundColor: generated ? "var(--color-ink)" : "var(--color-ground)", color: generated ? "#fff" : "var(--color-ink-3)", border: "none", cursor: generated ? "pointer" : "not-allowed" }}>
           บันทึกแคมเปญ
         </button>
@@ -171,7 +179,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   );
 }
 
-function HistoryTab() {
+function HistoryTab({ canEdit }: { canEdit: boolean }) {
   const { campaigns, updateCampaignStatus } = useData();
   if (campaigns.length === 0) {
     return <p className="text-sm" style={{ color: "var(--color-ink-3)" }}>ยังไม่มีแคมเปญ — สร้างได้จากแท็บ "สร้างแคมเปญ"</p>;
@@ -202,12 +210,13 @@ function HistoryTab() {
                 </td>
                 <td className="px-3 py-3.5 text-xs" style={{ color: "var(--color-ink-2)" }}>{new Date(c.createdAt).toLocaleDateString("th-TH-u-ca-gregory")}</td>
                 <td className="px-3 py-3.5 text-right">
-                  {c.status === "pending" && (
-                    <button onClick={() => updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
+                  {canEdit && c.status === "pending" && (
+                    <button onClick={() => void updateCampaignStatus(c.id, "approved")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ground)", border: "1px solid var(--color-rule)", color: "var(--color-ink-2)", cursor: "pointer" }}>อนุมัติ</button>
                   )}
-                  {c.status === "approved" && (
-                    <button onClick={() => updateCampaignStatus(c.id, "sent")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>ทำเครื่องหมายว่าส่งแล้ว</button>
+                  {canEdit && c.status === "approved" && (
+                    <button onClick={() => void updateCampaignStatus(c.id, "sent")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>ทำเครื่องหมายว่าส่งแล้ว</button>
                   )}
+                  {!canEdit && <span className="text-xs" style={{ color: "var(--color-ink-3)" }}>ดูอย่างเดียว</span>}
                 </td>
               </tr>
             );
@@ -219,9 +228,10 @@ function HistoryTab() {
 }
 
 export default function Campaigns() {
+  const { canEditCampaigns } = useAuth();
   const location = useLocation();
   const preselectedSegment = (location.state as any)?.preselectedSegment as Segment | undefined;
-  const [tab, setTab] = useState<"create" | "history">("create");
+  const [tab, setTab] = useState<"create" | "history">(canEditCampaigns ? "create" : "history");
 
   return (
     <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
@@ -231,7 +241,10 @@ export default function Campaigns() {
       </div>
 
       <div className="flex gap-1" style={{ borderBottom: "1px solid var(--color-rule)" }}>
-        {[{ id: "create", label: "สร้างแคมเปญ" }, { id: "history", label: "ประวัติแคมเปญ" }].map((t) => {
+        {[
+          ...(canEditCampaigns ? [{ id: "create", label: "สร้างแคมเปญ" }] : []),
+          { id: "history", label: "ประวัติแคมเปญ" },
+        ].map((t) => {
           const active = tab === t.id;
           return (
             <button key={t.id} onClick={() => setTab(t.id as "create" | "history")} className="px-4 py-2.5 text-sm font-medium relative" style={{ color: active ? "var(--color-ink)" : "var(--color-ink-3)", background: "none", border: "none", cursor: "pointer", marginBottom: -1 }}>
@@ -242,8 +255,8 @@ export default function Campaigns() {
         })}
       </div>
 
-      {tab === "create" && <CreateTab preselected={preselectedSegment} />}
-      {tab === "history" && <HistoryTab />}
+      {tab === "create" && canEditCampaigns && <CreateTab preselected={preselectedSegment} />}
+      {tab === "history" && <HistoryTab canEdit={canEditCampaigns} />}
     </main>
   );
 }

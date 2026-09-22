@@ -4,7 +4,7 @@ import { useAuth, GoogleSignInButton } from "../lib/auth";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, ready, error, clientIdConfigured, devSignIn } = useAuth();
+  const { user, ready, error, clientIdConfigured } = useAuth();
 
   useEffect(() => {
     if (user) navigate("/dashboard");
@@ -82,15 +82,6 @@ export default function Login() {
                 ยังไม่ได้ตั้งค่า Google OAuth Client ID — เพิ่มตัวแปร <code>VITE_GOOGLE_CLIENT_ID</code> ใน
                 environment variables (ดูวิธีตั้งค่าใน README) เพื่อเปิดใช้งานการเข้าสู่ระบบด้วย Google จริง
               </p>
-              {import.meta.env.DEV && (
-                <button
-                  onClick={devSignIn}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl py-3 px-4 text-sm font-medium"
-                  style={{ backgroundColor: "var(--color-ink)", color: "#FFFFFF", cursor: "pointer", border: "none" }}
-                >
-                  ดำเนินการต่อ (โหมดพัฒนา — ไม่ใช่การเข้าสู่ระบบจริง)
-                </button>
-              )}
             </div>
           )}
 
