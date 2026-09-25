@@ -40,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         await recordLineEvent(event, accessToken);
         if (event.type === "message" && event.message?.type === "text" && event.replyToken) {
-          const text = event.message.text.trim();
+          const text = (event.message.text ?? "").trim();
           const userId = event.source?.userId;
 
           if (TRACKING_CODE_PATTERN.test(text.toUpperCase())) {
