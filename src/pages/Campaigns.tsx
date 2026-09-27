@@ -21,6 +21,37 @@ type RfmFilter = string | "ทุกกลุ่ม";
 
 const TONES = ["อบอุ่นเป็นกันเอง", "สนุกสนาน", "ทางการ", "หรูหรา"];
 
+type Objective = "increase_sales" | "retain_customers";
+type Subgoal = "repeat_rate" | "reduce_at_risk";
+
+const OBJECTIVE_META: Record<Objective, { label: string; defaultValue: string }> = {
+  increase_sales: { label: "เพิ่มยอดขาย", defaultValue: "5" },
+  retain_customers: { label: "รักษาฐานลูกค้าเดิม", defaultValue: "10" },
+};
+const SUBGOAL_META: Record<Subgoal, { label: string }> = {
+  repeat_rate: { label: "เพิ่มอัตราการซื้อซ้ำ" },
+  reduce_at_risk: { label: "ลดจำนวนลูกค้าที่เสี่ยงเลิกซื้อ" },
+};
+// Which target groups the objective step nudges the marketer toward —
+// pulled straight from the campaign-objective design doc's mapping table.
+const RECOMMENDED_SEGMENTS: Record<Objective, Target[]> = {
+  increase_sales: ["Premium", "Regular"],
+  retain_customers: ["Dormant"],
+};
+const RECOMMENDED_RFM: Record<Objective, string[]> = {
+  increase_sales: ["champions", "loyal", "potential-loyalist"],
+  retain_customers: ["at-risk", "need-attention", "about-to-sleep", "hibernating"],
+};
+
+function buildAutoPrompt(objective: Objective, subgoal: Subgoal, targetValue: string, periodDays: string): string {
+  const value = targetValue.trim() || OBJECTIVE_META[objective].defaultValue;
+  const period = periodDays.trim() || "30";
+  if (objective === "increase_sales") {
+    return `สร้างแคมเปญเพื่อเพิ่มยอดขาย ${value}% ภายใน ${period} วัน โดยเลือกข้อเสนอที่เหมาะสมกับพฤติกรรมของกลุ่มลูกค้า เช่น Bundle, Cross-sell หรือ Upsell และหลีกเลี่ยงส่วนลดที่มากเกินความจำเป็น`;
+  }
+  return `สร้างแคมเปญเพื่อ${SUBGOAL_META[subgoal].label} ${value}% ภายใน ${period} วัน โดยเน้นสิทธิพิเศษสำหรับลูกค้าเดิม หรือแคมเปญ Win-back และหลีกเลี่ยงข้อความที่กดดันลูกค้ามากเกินไป`;
+}
+
 const STATUS_META: Record<CampaignRecord["status"], { label: string; bg: string; color: string }> = {
   pending: { label: "รออนุมัติ", bg: "#FEF3C7", color: "#92400E" },
   rejected: { label: "ไม่อนุมัติ", bg: "#FEE2E2", color: "#991B1B" },
@@ -65,10 +96,15 @@ function LineChatPreview({ message, imageUrl }: { message: string; imageUrl?: st
 
 function CreateTab({ preselected }: { preselected?: Segment }) {
   const { customers, rawTransactions, addCampaign } = useData();
+  const [objective, setObjective] = useState<Objective | null>(null);
+  const [subgoal, setSubgoal] = useState<Subgoal>("repeat_rate");
+  const [targetValue, setTargetValue] = useState("");
+  const [periodDays, setPeriodDays] = useState("30");
   const [target, setTarget] = useState<Target | null>(preselected ?? null);
   const [churnFilter, setChurnFilter] = useState<ChurnFilter>("ทุกระดับ");
   const [rfmFilter, setRfmFilter] = useState<RfmFilter>("ทุกกลุ่ม");
   const [prompt, setPrompt] = useState("");
+  const [promptDirty, setPromptDirty] = useState(false);
   const [tone, setTone] = useState<string>(TONES[0]);
   const [generated, setGenerated] = useState("");
   const [imageUrl, setImageUrl] = useState("");
@@ -77,6 +113,22 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  function selectObjective(next: Objective) {
+    setObjective(next);
+    setTargetValue(OBJECTIVE_META[next].defaultValue);
+    setPromptDirty(false);
+    setPrompt(buildAutoPrompt(next, subgoal, OBJECTIVE_META[next].defaultValue, periodDays || "30"));
+  }
+
+  // Keeps the auto-generated prompt in sync while the marketer is still
+  // tweaking the objective's numbers — stops the moment they edit the
+  // textarea themselves so their wording is never silently overwritten.
+  useEffect(() => {
+    if (!objective || promptDirty) return;
+    setPrompt(buildAutoPrompt(objective, subgoal, targetValue, periodDays));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subgoal, targetValue, periodDays]);
 
   const effectiveTarget = target ?? "ทุก Segment";
 
@@ -111,7 +163,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
   const rfmLabel = rfmCell?.label ?? "ทุกกลุ่ม RFM";
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || !target) return;
+    if (!prompt.trim() || !target || !objective) return;
     setLoading(true);
     setError(null);
     try {
@@ -126,6 +178,10 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           rfmCellDescription: rfmCell?.description ?? "",
           customerCount: targetCount,
           toneLabel: tone,
+          objectiveLabel: OBJECTIVE_META[objective].label,
+          objectiveSubgoalLabel: objective === "retain_customers" ? SUBGOAL_META[subgoal].label : undefined,
+          objectiveTargetValue: targetValue.trim() ? Number(targetValue) : undefined,
+          objectivePeriodDays: periodDays.trim() ? Number(periodDays) : undefined,
         }),
       });
       const data = await res.json();
@@ -153,6 +209,10 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
         churnFilterLabel: churnFilter === "ทุกระดับ" ? undefined : churnLabel,
         rfmFilterLabel: rfmFilter === "ทุกกลุ่ม" ? undefined : rfmLabel,
         imageUrl: imageUrl.trim() || undefined,
+        objective: objective ?? undefined,
+        objectiveSubgoal: objective === "retain_customers" ? subgoal : undefined,
+        objectiveTargetValue: objective && targetValue.trim() ? Number(targetValue) : undefined,
+        objectivePeriodDays: objective && periodDays.trim() ? Number(periodDays) : undefined,
       });
       setSubmitted(true);
     } catch (submitErr) {
@@ -170,7 +230,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           <p className="text-base font-semibold" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>บันทึกแคมเปญแล้ว</p>
           <p className="text-sm mt-1" style={{ color: "var(--color-ink-3)" }}>ดูสถานะและอัปเดตได้ที่แท็บ "ประวัติแคมเปญ"</p>
         </div>
-        <button onClick={() => { setSubmitted(false); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setTone(TONES[0]); setGenerated(""); setImageUrl(""); setCampaignId(crypto.randomUUID()); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button onClick={() => { setSubmitted(false); setObjective(null); setSubgoal("repeat_rate"); setTargetValue(""); setPeriodDays("30"); setTarget(null); setChurnFilter("ทุกระดับ"); setRfmFilter("ทุกกลุ่ม"); setPrompt(""); setPromptDirty(false); setTone(TONES[0]); setGenerated(""); setImageUrl(""); setCampaignId(crypto.randomUUID()); setError(null); }} className="mt-2 px-5 py-2 rounded-xl text-sm font-medium" style={{ backgroundColor: "var(--color-ink)", color: "#fff", border: "none", cursor: "pointer" }}>
           สร้างแคมเปญใหม่
         </button>
       </div>
@@ -183,11 +243,79 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>1</span>
-          เลือกกลุ่มเป้าหมาย
+          กำหนด Objective
         </p>
-        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าคำนวณจากข้อมูลจริงในไฟล์ CSV — เลือกได้หลายมิติร่วมกัน (ตัวเลือกที่ทำให้ไม่มีลูกค้าเหลือจะถูกปิดไว้)</p>
+        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>เลือกวัตถุประสงค์ของแคมเปญก่อน ระบบจะแนะนำกลุ่มเป้าหมายและร่าง Prompt ให้อัตโนมัติ (แก้ไขได้ทั้งหมด)</p>
 
         <div className="ml-7 space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.keys(OBJECTIVE_META) as Objective[]).map((key) => {
+              const active = objective === key;
+              return (
+                <button key={key} onClick={() => selectObjective(key)} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: "pointer" }}>
+                  <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{OBJECTIVE_META[key].label}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {objective === "increase_sales" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>เป้าหมายยอดขายที่ต้องการเพิ่ม (%)</label>
+                <input type="number" value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="5" className="w-full rounded-xl px-4 py-2.5 text-sm outline-none" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)" }} />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>ระยะเวลาวัดผล (วัน)</label>
+                <input type="number" value={periodDays} onChange={(e) => setPeriodDays(e.target.value)} placeholder="30" className="w-full rounded-xl px-4 py-2.5 text-sm outline-none" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)" }} />
+              </div>
+            </div>
+          )}
+
+          {objective === "retain_customers" && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs font-medium mb-1.5" style={{ color: "var(--color-ink-2)" }}>เป้าหมายย่อย</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(Object.keys(SUBGOAL_META) as Subgoal[]).map((key) => {
+                    const active = subgoal === key;
+                    return (
+                      <button key={key} onClick={() => setSubgoal(key)} className="text-left rounded-xl px-3 py-2" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: "pointer" }}>
+                        <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{SUBGOAL_META[key].label}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>ค่าเป้าหมาย (%)</label>
+                  <input type="number" value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="10" className="w-full rounded-xl px-4 py-2.5 text-sm outline-none" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)" }} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: "var(--color-ink-2)" }}>ระยะเวลาวัดผล (วัน)</label>
+                  <input type="number" value={periodDays} onChange={(e) => setPeriodDays(e.target.value)} placeholder="30" className="w-full rounded-xl px-4 py-2.5 text-sm outline-none" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", color: "var(--color-ink)" }} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>2</span>
+          เลือกกลุ่มเป้าหมาย
+        </p>
+        <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าคำนวณจากข้อมูลจริงในไฟล์ CSV — เลือกได้หลายมิติร่วมกัน (ตัวเลือกที่ทำให้ไม่มีลูกค้าเหลือจะถูกปิดไว้ ตัวเลือกที่มีเครื่องหมาย · แนะนำ สอดคล้องกับ Objective ที่เลือก)</p>
+
+        <div className="ml-7 space-y-4 relative">
+          {!objective && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl text-center px-6" style={{ backgroundColor: "var(--color-surface)", opacity: 0.92 }}>
+              <p className="text-xs font-medium" style={{ color: "var(--color-ink-3)" }}>เลือก Objective ในขั้นตอนที่ 1 ก่อน จึงจะเลือกกลุ่มเป้าหมายได้</p>
+            </div>
+          )}
+          <div className="space-y-4" style={{ opacity: objective ? 1 : 0.35, pointerEvents: objective ? "auto" : "none" }}>
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>Segment</p>
             <div className="grid grid-cols-3 gap-2">
@@ -195,9 +323,10 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
                 const active = target === t;
                 const count = countFor(t, churnFilter, rfmFilter);
                 const disabled = count === 0 && t !== "ทุก Segment";
+                const recommended = objective && t !== "ทุก Segment" && RECOMMENDED_SEGMENTS[objective].includes(t as Segment);
                 return (
-                  <button key={t} onClick={() => !disabled && setTarget(t)} disabled={disabled} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
-                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{t}</p>
+                  <button key={t} onClick={() => !disabled && setTarget(t)} disabled={disabled} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : recommended ? "#F59E0B" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{t}{recommended && !active && <span className="ml-1" style={{ color: "#B45309" }}>· แนะนำ</span>}</p>
                   </button>
                 );
               })}
@@ -230,27 +359,29 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
                 const active = rfmFilter === cell.key;
                 const count = countFor(effectiveTarget, churnFilter, cell.key);
                 const disabled = count === 0;
+                const recommended = objective && RECOMMENDED_RFM[objective].includes(cell.key);
                 return (
-                  <button key={cell.key} onClick={() => !disabled && setRfmFilter(cell.key)} disabled={disabled} title={cell.description} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
-                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{cell.label}</p>
+                  <button key={cell.key} onClick={() => !disabled && setRfmFilter(cell.key)} disabled={disabled} title={cell.description} className="text-left rounded-xl px-3 py-2.5" style={{ backgroundColor: active ? "var(--color-ink)" : "var(--color-surface)", border: `1.5px solid ${active ? "var(--color-ink)" : recommended ? "#F59E0B" : "var(--color-rule)"}`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1 }}>
+                    <p className="text-xs font-semibold" style={{ color: active ? "#fff" : "var(--color-ink)" }}>{cell.label}{recommended && !active && <span className="ml-1" style={{ color: "#B45309" }}>· แนะนำ</span>}</p>
                   </button>
                 );
               })}
             </div>
+          </div>
           </div>
         </div>
       </section>
 
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
-          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>2</span>
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>3</span>
           Prompt สำหรับ AI
         </p>
         <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>บอกโจทย์แคมเปญที่ต้องการ AI จะคิดข้อความให้ตามกลุ่มเป้าหมาย (Segment / Churn / RFM) — AI จะพูดถึงเฉพาะสินค้าหรือบริการที่พิมพ์ไว้ในโจทย์นี้เท่านั้น (รองรับสินค้าใหม่หรือบริการที่ไม่มีในประวัติการขายด้วย)</p>
         <div className="ml-7 space-y-2">
           <textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => { setPrompt(e.target.value); setPromptDirty(true); }}
             placeholder="เช่น: อยากดึงลูกค้ากลุ่มนี้กลับมาซื้อซ้ำ โดยเน้นสินค้าที่เขาเคยซื้อ ไม่ต้องลดราคาแรง"
             rows={3}
             className="w-full rounded-xl px-4 py-3 text-sm resize-none outline-none"
@@ -284,9 +415,9 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           )}
           <button
             onClick={handleGenerate}
-            disabled={!prompt.trim() || !target || loading}
+            disabled={!prompt.trim() || !target || !objective || loading}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
-            style={{ backgroundColor: !prompt.trim() || !target || loading ? "var(--color-ground)" : "var(--color-ink)", color: !prompt.trim() || !target || loading ? "var(--color-ink-3)" : "#fff", border: "none", cursor: !prompt.trim() || !target || loading ? "not-allowed" : "pointer" }}
+            style={{ backgroundColor: !prompt.trim() || !target || !objective || loading ? "var(--color-ground)" : "var(--color-ink)", color: !prompt.trim() || !target || !objective || loading ? "var(--color-ink-3)" : "#fff", border: "none", cursor: !prompt.trim() || !target || !objective || loading ? "not-allowed" : "pointer" }}
           >
             {loading ? "กำลังสร้างด้วย AI…" : "สร้างแคมเปญด้วย AI"}
           </button>
@@ -295,7 +426,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
 
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
-          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>3</span>
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>4</span>
           พรีวิวข้อความ
         </p>
         <div className="ml-7">
@@ -331,6 +462,14 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
 
     <aside className="lg:sticky lg:top-8">
       <div className="rounded-2xl p-5" style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-rule)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        {objective && (
+          <div className="mb-4 pb-4" style={{ borderBottom: "1px solid var(--color-rule)" }}>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>Objective</p>
+            <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>{OBJECTIVE_META[objective].label}</p>
+            {objective === "retain_customers" && <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-2)" }}>{SUBGOAL_META[subgoal].label}</p>}
+            <p className="text-xs mt-0.5" style={{ color: "var(--color-ink-2)" }}>เป้าหมาย {targetValue || OBJECTIVE_META[objective].defaultValue}% ภายใน {periodDays || "30"} วัน</p>
+          </div>
+        )}
         <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--color-ink-3)" }}>ลูกค้าที่ตรงเงื่อนไขทั้งหมด</p>
         <p className="text-4xl font-semibold tabular-nums mb-4" style={{ color: "var(--color-ink)", fontFamily: "var(--font-serif)" }}>{targetCount.toLocaleString("th-TH")} <span className="text-base font-normal" style={{ color: "var(--color-ink-3)" }}>คน</span></p>
         <div className="space-y-2 pt-4" style={{ borderTop: "1px solid var(--color-rule)" }}>
@@ -514,6 +653,14 @@ function HistoryTab({ canEdit }: { canEdit: boolean }) {
                   {c.targetSegment}
                   {(c.churnFilterLabel || c.rfmFilterLabel) && (
                     <span style={{ color: "var(--color-ink-3)" }}> · {[c.churnFilterLabel, c.rfmFilterLabel].filter(Boolean).join(" · ")}</span>
+                  )}
+                  {c.objective && (
+                    <p className="mt-0.5" style={{ color: "var(--color-ink-3)" }}>
+                      {OBJECTIVE_META[c.objective].label}
+                      {c.objectiveSubgoal && ` · ${SUBGOAL_META[c.objectiveSubgoal].label}`}
+                      {c.objectiveTargetValue != null && ` · เป้าหมาย ${c.objectiveTargetValue}%`}
+                      {c.objectivePeriodDays != null && ` / ${c.objectivePeriodDays} วัน`}
+                    </p>
                   )}
                 </td>
                 <td className="px-3 py-3.5">

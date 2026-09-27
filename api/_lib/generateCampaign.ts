@@ -8,6 +8,10 @@ export interface GenerateCampaignInput {
   rfmCellDescription: string;
   customerCount: number;
   toneLabel: string;
+  objectiveLabel?: string;
+  objectiveSubgoalLabel?: string;
+  objectiveTargetValue?: number;
+  objectivePeriodDays?: number;
 }
 
 export interface GenerateCampaignOutput {
@@ -65,10 +69,14 @@ export async function generateCampaign(
 
   const ai = new GoogleGenAI({ apiKey });
 
+  const objectiveLine = input.objectiveLabel
+    ? `- วัตถุประสงค์แคมเปญ: ${input.objectiveLabel}${input.objectiveSubgoalLabel ? ` (${input.objectiveSubgoalLabel})` : ""}${input.objectiveTargetValue != null ? ` — เป้าหมาย ${input.objectiveTargetValue}%` : ""}${input.objectivePeriodDays != null ? ` ภายใน ${input.objectivePeriodDays} วัน` : ""}\n`
+    : "";
+
   const userPrompt = `โจทย์จากนักการตลาด: ${input.prompt.trim()}
 
 กลุ่มเป้าหมายที่เลือกไว้:
-- Segment: ${input.segmentLabel}
+${objectiveLine}- Segment: ${input.segmentLabel}
 - Churn risk: ${input.churnLabel}
 - กลุ่ม RFM: ${input.rfmCellLabel}${input.rfmCellDescription ? ` (${input.rfmCellDescription})` : ""}
 - จำนวนลูกค้าที่ตรงเงื่อนไขทั้งหมด: ${input.customerCount.toLocaleString("th-TH")} คน

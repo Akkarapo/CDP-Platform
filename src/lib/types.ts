@@ -75,6 +75,12 @@ export interface CampaignRecord {
   rfmFilterLabel?: string;
   prompt?: string;
   imageUrl?: string;
+  // Marketing objective set in step 1 of campaign creation — absent on
+  // campaigns saved before this field existed.
+  objective?: "increase_sales" | "retain_customers";
+  objectiveSubgoal?: "repeat_rate" | "reduce_at_risk";
+  objectiveTargetValue?: number;
+  objectivePeriodDays?: number;
 }
 
 export interface ImportLogEntry {

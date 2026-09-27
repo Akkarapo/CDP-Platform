@@ -168,7 +168,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     supabase
       .from("campaigns")
-      .select("id,name,target_segment,status,paused,message,created_at,image_url")
+      .select("id,name,target_segment,status,paused,message,created_at,image_url,prompt,churn_filter_label,rfm_filter_label,objective,objective_subgoal,objective_target_value,objective_period_days")
       .order("created_at", { ascending: false })
       .then(({ data, error: campaignError }) => {
         if (!active) return;
@@ -185,6 +185,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
           message: row.message,
           createdAt: row.created_at,
           imageUrl: row.image_url ?? undefined,
+          prompt: row.prompt ?? undefined,
+          churnFilterLabel: row.churn_filter_label ?? undefined,
+          rfmFilterLabel: row.rfm_filter_label ?? undefined,
+          objective: row.objective as CampaignRecord["objective"] ?? undefined,
+          objectiveSubgoal: row.objective_subgoal as CampaignRecord["objectiveSubgoal"] ?? undefined,
+          objectiveTargetValue: row.objective_target_value ?? undefined,
+          objectivePeriodDays: row.objective_period_days ?? undefined,
         })));
       });
 
@@ -278,8 +285,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
         message: c.message,
         image_url: c.imageUrl ?? null,
         created_by: authData.user.id,
+        prompt: c.prompt ?? null,
+        churn_filter_label: c.churnFilterLabel ?? null,
+        rfm_filter_label: c.rfmFilterLabel ?? null,
+        objective: c.objective ?? null,
+        objective_subgoal: c.objectiveSubgoal ?? null,
+        objective_target_value: c.objectiveTargetValue ?? null,
+        objective_period_days: c.objectivePeriodDays ?? null,
       })
-      .select("id,name,target_segment,status,paused,message,created_at,image_url")
+      .select("id,name,target_segment,status,paused,message,created_at,image_url,prompt,churn_filter_label,rfm_filter_label,objective,objective_subgoal,objective_target_value,objective_period_days")
       .single();
 
     if (campaignError) throw campaignError;
@@ -292,6 +306,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       message: data.message,
       createdAt: data.created_at,
       imageUrl: data.image_url ?? undefined,
+      prompt: data.prompt ?? undefined,
+      churnFilterLabel: data.churn_filter_label ?? undefined,
+      rfmFilterLabel: data.rfm_filter_label ?? undefined,
+      objective: data.objective as CampaignRecord["objective"] ?? undefined,
+      objectiveSubgoal: data.objective_subgoal as CampaignRecord["objectiveSubgoal"] ?? undefined,
+      objectiveTargetValue: data.objective_target_value ?? undefined,
+      objectivePeriodDays: data.objective_period_days ?? undefined,
     }, ...prev]);
   }
   async function updateCampaignStatus(id: string, status: CampaignRecord["status"]) {
