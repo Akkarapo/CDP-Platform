@@ -302,6 +302,8 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
         </div>
       </section>
 
+      {objective && (
+      <>
       <section>
         <p className="text-sm font-semibold mb-1" style={{ color: "var(--color-ink)" }}>
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs mr-2 font-bold" style={{ backgroundColor: "var(--color-ink)", color: "#fff" }}>2</span>
@@ -309,13 +311,7 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
         </p>
         <p className="text-xs mb-3 ml-7" style={{ color: "var(--color-ink-3)" }}>จำนวนลูกค้าคำนวณจากข้อมูลจริงในไฟล์ CSV — เลือกได้หลายมิติร่วมกัน (ตัวเลือกที่ทำให้ไม่มีลูกค้าเหลือจะถูกปิดไว้ ตัวเลือกที่มีเครื่องหมาย · แนะนำ สอดคล้องกับ Objective ที่เลือก)</p>
 
-        <div className="ml-7 space-y-4 relative">
-          {!objective && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl text-center px-6" style={{ backgroundColor: "var(--color-surface)", opacity: 0.92 }}>
-              <p className="text-xs font-medium" style={{ color: "var(--color-ink-3)" }}>เลือก Objective ในขั้นตอนที่ 1 ก่อน จึงจะเลือกกลุ่มเป้าหมายได้</p>
-            </div>
-          )}
-          <div className="space-y-4" style={{ opacity: objective ? 1 : 0.35, pointerEvents: objective ? "auto" : "none" }}>
+        <div className="ml-7 space-y-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--color-ink-3)" }}>Segment</p>
             <div className="grid grid-cols-3 gap-2">
@@ -367,7 +363,6 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
                 );
               })}
             </div>
-          </div>
           </div>
         </div>
       </section>
@@ -458,6 +453,8 @@ function CreateTab({ preselected }: { preselected?: Segment }) {
           บันทึกแคมเปญ
         </button>
       </div>
+      </>
+      )}
     </div>
 
     <aside className="lg:sticky lg:top-8">
