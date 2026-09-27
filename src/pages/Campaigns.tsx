@@ -94,16 +94,22 @@ function LineChatPreview({ message, imageUrl }: { message: string; imageUrl?: st
   );
 }
 
-function CreateTab({ preselected }: { preselected?: Segment }) {
+interface CreateTabProps {
+  preselected?: Segment;
+  preselectedObjective?: Objective;
+  preselectedRfmFilter?: string;
+}
+
+function CreateTab({ preselected, preselectedObjective, preselectedRfmFilter }: CreateTabProps) {
   const { customers, rawTransactions, addCampaign } = useData();
-  const [objective, setObjective] = useState<Objective | null>(null);
+  const [objective, setObjective] = useState<Objective | null>(preselectedObjective ?? null);
   const [subgoal, setSubgoal] = useState<Subgoal>("repeat_rate");
-  const [targetValue, setTargetValue] = useState("");
+  const [targetValue, setTargetValue] = useState(preselectedObjective ? OBJECTIVE_META[preselectedObjective].defaultValue : "");
   const [periodDays, setPeriodDays] = useState("30");
   const [target, setTarget] = useState<Target | null>(preselected ?? null);
   const [churnFilter, setChurnFilter] = useState<ChurnFilter>("ทุกระดับ");
-  const [rfmFilter, setRfmFilter] = useState<RfmFilter>("ทุกกลุ่ม");
-  const [prompt, setPrompt] = useState("");
+  const [rfmFilter, setRfmFilter] = useState<RfmFilter>(preselectedRfmFilter ?? "ทุกกลุ่ม");
+  const [prompt, setPrompt] = useState(() => preselectedObjective ? buildAutoPrompt(preselectedObjective, "repeat_rate", OBJECTIVE_META[preselectedObjective].defaultValue, "30") : "");
   const [promptDirty, setPromptDirty] = useState(false);
   const [tone, setTone] = useState<string>(TONES[0]);
   const [generated, setGenerated] = useState("");
@@ -721,6 +727,8 @@ export default function Campaigns() {
   const { canEditCampaigns } = useAuth();
   const location = useLocation();
   const preselectedSegment = (location.state as any)?.preselectedSegment as Segment | undefined;
+  const preselectedObjective = (location.state as any)?.preselectedObjective as Objective | undefined;
+  const preselectedRfmFilter = (location.state as any)?.preselectedRfmFilter as string | undefined;
   const [tab, setTab] = useState<"create" | "history">(canEditCampaigns ? "create" : "history");
 
   return (
@@ -745,7 +753,7 @@ export default function Campaigns() {
         })}
       </div>
 
-      {tab === "create" && canEditCampaigns && <CreateTab preselected={preselectedSegment} />}
+      {tab === "create" && canEditCampaigns && <CreateTab preselected={preselectedSegment} preselectedObjective={preselectedObjective} preselectedRfmFilter={preselectedRfmFilter} />}
       {tab === "history" && <HistoryTab canEdit={canEditCampaigns} />}
     </main>
   );

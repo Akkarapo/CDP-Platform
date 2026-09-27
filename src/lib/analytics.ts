@@ -190,6 +190,90 @@ export function buildRfmMatrixStats(customers: Customer[]) {
   });
 }
 
+export interface PeriodDiagnostics {
+  sales: number;
+  bills: number;
+  aov: number;
+  buyingCustomers: number;
+  newCustomers: number;
+  repeatCustomers: number;
+  repeatRate: number;
+  avgItemsPerBill: number;
+  avgPricePerItem: number;
+  // % of this window's revenue that came from Premium-segment / Champions-cell
+  // customers — a drop here (with AOV also down) points at high-value
+  // customers buying less, not just a cheaper overall product mix.
+  premiumChampionsShare: number;
+  atRiskCount: number;
+  branchBills: { branch: string; bills: number }[];
+}
+
+// Powers the Dashboard's period-over-period diagnostic cards. `end` is
+// exclusive. At Risk is re-derived "as of `end`" by rebuilding the RFM
+// classification from only the roster/transactions that existed by then —
+// same technique as usePastCustomer's 6-month-ago snapshot in store.tsx,
+// since the app doesn't keep a history of past Segment/RFM classifications.
+export function buildPeriodDiagnostics(
+  allTransactions: RawTransaction[],
+  rawCustomers: RawCustomer[],
+  customers: Customer[],
+  start: Date,
+  end: Date
+): PeriodDiagnostics {
+  const startMs = +start;
+  const endMs = +end;
+  const windowTx = allTransactions.filter((t) => {
+    const d = +new Date(t.purchase_datetime);
+    return d >= startMs && d < endMs;
+  });
+
+  const sales = windowTx.reduce((s, t) => s + Number(t.line_total || 0), 0);
+  const bills = windowTx.length;
+  const aov = bills > 0 ? sales / bills : 0;
+
+  const buyerIds = new Set(windowTx.map((t) => t.customer_id));
+
+  const firstPurchaseMs = new Map<string, number>();
+  for (const t of allTransactions) {
+    const d = +new Date(t.purchase_datetime);
+    const cur = firstPurchaseMs.get(t.customer_id);
+    if (cur === undefined || d < cur) firstPurchaseMs.set(t.customer_id, d);
+  }
+  let newCustomers = 0;
+  let repeatCustomers = 0;
+  for (const id of buyerIds) {
+    const fp = firstPurchaseMs.get(id);
+    if (fp !== undefined && fp >= startMs) newCustomers++;
+    else repeatCustomers++;
+  }
+  const repeatRate = buyerIds.size > 0 ? (repeatCustomers / buyerIds.size) * 100 : 0;
+
+  const totalQty = windowTx.reduce((s, t) => s + Number(t.quantity || 0), 0);
+  const avgItemsPerBill = bills > 0 ? totalQty / bills : 0;
+  const avgPricePerItem = totalQty > 0 ? sales / totalQty : 0;
+
+  const customerById = new Map(customers.map((c) => [c.id, c]));
+  let premiumChampionsRevenue = 0;
+  for (const t of windowTx) {
+    const cust = customerById.get(t.customer_id);
+    if (!cust) continue;
+    const cell = classifyRfmCell(cust.rfm.recency, cust.rfm.frequency, cust.rfm.monetary);
+    if (cust.segment === "Premium" || cell.key === "champions") premiumChampionsRevenue += Number(t.line_total || 0);
+  }
+  const premiumChampionsShare = sales > 0 ? (premiumChampionsRevenue / sales) * 100 : 0;
+
+  const branchMap = new Map<string, number>();
+  for (const t of windowTx) branchMap.set(t.store_branch, (branchMap.get(t.store_branch) ?? 0) + 1);
+  const branchBills = [...branchMap.entries()].map(([branch, count]) => ({ branch, bills: count })).sort((a, b) => b.bills - a.bills);
+
+  const pastRoster = rawCustomers.filter((c) => +new Date(c.register_date) < endMs);
+  const pastTransactions = allTransactions.filter((t) => +new Date(t.purchase_datetime) < endMs);
+  const pastCustomers = buildCustomers(pastRoster, pastTransactions, [], end);
+  const atRiskCount = pastCustomers.filter((c) => classifyRfmCell(c.rfm.recency, c.rfm.frequency, c.rfm.monetary).key === "at-risk").length;
+
+  return { sales, bills, aov, buyingCustomers: buyerIds.size, newCustomers, repeatCustomers, repeatRate, avgItemsPerBill, avgPricePerItem, premiumChampionsShare, atRiskCount, branchBills };
+}
+
 export interface ProductStat {
   name: string;
   category: string;
