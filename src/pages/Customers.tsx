@@ -79,7 +79,7 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
               <div className="flex items-center gap-2 mt-2">
                 <Badge label={customer.segment} bg={seg.bg} color={seg.color} />
                 <Badge label={churn.label} bg={churn.bg} color={churn.color} />
-                <Badge label={customer.memberTier} bg="#F3F4F6" color="#6B7280" />
+                <Badge label={`${customer.memberTier} · ${customer.pointsBalance.toLocaleString("th-TH")} แต้ม`} bg="#F3F4F6" color="#6B7280" />
               </div>
             </div>
           </div>
@@ -378,12 +378,13 @@ export default function Customers() {
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 96 }}>Segment</th>
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 108 }}>Churn risk</th>
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 108 }}>ยอดซื้อสะสม</th>
+              <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left" style={{ color: "var(--color-ink-3)", width: 104 }}>Tier / แต้ม</th>
               <th className="px-3 py-3 text-xs font-medium tracking-wide uppercase text-left whitespace-nowrap" style={{ color: "var(--color-ink-3)", width: 112 }}>ซื้อล่าสุด</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={6} className="px-5 py-12 text-center text-sm" style={{ color: "var(--color-ink-3)" }}>ไม่พบรายชื่อที่ตรงกับเงื่อนไข</td></tr>
+              <tr><td colSpan={7} className="px-5 py-12 text-center text-sm" style={{ color: "var(--color-ink-3)" }}>ไม่พบรายชื่อที่ตรงกับเงื่อนไข</td></tr>
             ) : filtered.map((c, i) => {
               const seg = SEGMENT_META[c.segment];
               const churn = CHURN_META[c.churnRisk];
@@ -411,6 +412,10 @@ export default function Customers() {
                     </span>
                   </td>
                   <td className="px-3 py-3.5 text-left font-semibold tabular-nums text-sm" style={{ color: "var(--color-ink)" }}>฿{c.totalSpend.toLocaleString("th-TH")}</td>
+                  <td className="px-3 py-3.5">
+                    <div className="text-xs font-medium" style={{ color: "var(--color-ink)" }}>{c.memberTier}</div>
+                    <div className="text-xs tabular-nums" style={{ color: "var(--color-ink-3)" }}>{c.pointsBalance.toLocaleString("th-TH")} แต้ม</div>
+                  </td>
                   <td className="px-3 py-3.5 text-left text-xs whitespace-nowrap" style={{ color: "var(--color-ink-2)" }}>{c.lastPurchaseLabel}</td>
                 </tr>
               );
